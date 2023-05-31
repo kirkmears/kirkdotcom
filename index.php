@@ -10,7 +10,6 @@
 
 <p style="text-align: center;"><img src="icons/1-14-2009-c.jpg" alt="" width="889" height="192" align="middle">&nbsp;</p>
 
-	<h1>Temp GPT</h1>
 	<div id="gallery">
 		<?php
 			$dir = "photos/";
