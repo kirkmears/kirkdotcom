@@ -2,7 +2,7 @@
 <html xml:lang="en-US" xmlns="http://www.w3.org/1999/xhtml" lang="en-US"><head id="Head">
 <!--**********************************************************************************-->
 <!-- kirkmears.com - http://www.kirkmears.com                                         -->
-<!-- Copyright (c) 2023                                                                -->
+<!-- https://kirkdotcom.azurewebsites.net                                             -->
 <!-- by kirk                                                                          -->
 <!--**********************************************************************************-->
 
