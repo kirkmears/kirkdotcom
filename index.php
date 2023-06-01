@@ -117,7 +117,7 @@
 
 
 
-<p style="text-align: center;"><a href="https://www.kirkmears.com/mustang" target="_blank">mustang</a></p>
+<p style="text-align: center;"><a href="https://kirkdotcom.azurewebsites.net/mustang" target="_blank">mustang</a></p>
 <p style="text-align: center;"><a href="https://www.kirkmears.com/cts" target="_blank">cts</a></p>
 <p style="text-align: center;"><a href="https://www.kirkmears.com/gt80" target="_blank">gt80</a></p>
 <p style="text-align: center;"><a href="http://192.168.0.236" target="_blank"><img src="icons/index.html" alt="" width="0" height="0" align="middle"></a></p>
