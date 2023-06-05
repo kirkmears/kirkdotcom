@@ -8,7 +8,7 @@
 	<script type="text/javascript" src="script.js"></script>
 </head>
 <body>
-	<h1>GT80</h1>
+	<h1>mustang</h1>
 	<div id="gallery">
 		<?php
 			$dir = "photos/";
