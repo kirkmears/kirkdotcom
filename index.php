@@ -89,11 +89,11 @@
 	
 
 <p style="text-align: center;"><a href="https://www.kirkmears.com/lightning" target="_blank">Ford Lightning Pictures 1</a></p>
-<p style="text-align: center;"><a href="http://192.168.0.236/" target="_blank">Proton Docker nginx</a></p>
+<p style="text-align: center;"><a href="http://192.168.0.296/" target="_blank">Proton Docker nginx</a></p>
 <p style="text-align: center;"><a href="https://kirkdotcom.azurewebsites.net/mustang" target="_blank">mustang</a></p>
 <p style="text-align: center;"><a href="https://www.kirkmears.com/cts" target="_blank">cts</a></p>
 <p style="text-align: center;"><a href="https://kirkdotcom.azurewebsites.net/GT80" target="_blank">gt80</a></p>
-<p style="text-align: center;"><a href="http://192.168.0.236" target="_blank"><img src="icons/index.html" alt="" width="0" height="0" align="middle"></a></p>
+<p style="text-align: center;"><a href="http://192.168.0.239" target="_blank"><img src="icons/index.html" alt="" width="0" height="0" align="middle"></a></p>
 <p style="text-align: center;"><img src="https://radar.weather.gov/ridge/standard/KFWS_loop.gif" alt="" width="600" height="550" align="middle">&nbsp;</p>
 
 </div>
@@ -109,7 +109,7 @@
 
         <tr>
             <td style="text-align: center;"><a href="https://www.kirkmears.com/lightning" target="_blank"><span style="background-color: rgb(0, 0, 0);"><img src="icons/light.png" alt="" width="120" height="90" border="2"></span></a></td>
-            <td style="text-align: center;"><a href="http://192.168.0.236" target="_blank"><img src="http://192.168.0.236/splash.jpg" alt="" width="80" height="60"></a></td>
+            <td style="text-align: center;"><a href="http://192.168.0.239" target="_blank"><img src="http://192.168.0.239/splash.jpg" alt="" width="80" height="60"></a></td>
             <td style="text-align: center;"><a href="https://www.kirkmears.com/mustang" target="_blank"><img src="icons/ford_logo_125_2_1_1.jpeg" alt="" width="125" height="93"></a></td>
             <td style="text-align: center;"><a href="http://www.tbs.com/watchtbs/west" target="_blank"><img src="icons/latest.svg" alt="" width="50" height="29"></a></td>
             <td style="text-align: center;"><a href="https://www.revntv.com/home" target="_blank"><img src="icons/logo_revntv.png" alt="" width="79" height="26"></a></td>
@@ -120,7 +120,7 @@
 <p style="text-align: center;"><a href="https://kirkdotcom.azurewebsites.net/mustang" target="_blank">mustang</a></p>
 <p style="text-align: center;"><a href="https://www.kirkmears.com/cts" target="_blank">cts</a></p>
 <p style="text-align: center;"><a href="https://www.kirkmears.com/gt80" target="_blank">gt80</a></p>
-<p style="text-align: center;"><a href="http://192.168.0.236" target="_blank"><img src="icons/splash.jpg" alt="" width="80" height="80" align="middle"></a></p>
+<p style="text-align: center;"><a href="http://192.168.0.239" target="_blank"><img src="icons/splash.jpg" alt="" width="80" height="80" align="middle"></a></p>
 <p style="text-align: center;"><img src="https://radar.weather.gov/ridge/standard/KFWS_loop.gif" alt="" width="60" height="55" align="middle">&nbsp;</p>
 
 	<tr>
