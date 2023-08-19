@@ -120,6 +120,7 @@
 <p style="text-align: center;"><a href="https://kirkdotcom.azurewebsites.net/mustang" target="_blank">mustang</a></p>
 <p style="text-align: center;"><a href="https://www.kirkmears.com/cts" target="_blank">cts</a></p>
 <p style="text-align: center;"><a href="https://www.kirkmears.com/gt80" target="_blank">gt80</a></p>
+<p style="text-align: center;"><a href="https://www.kirkmears.com/army" target="_blank">army</a></p>	    
 <p style="text-align: center;"><a href="http://192.168.0.239" target="_blank"><img src="icons/splash.jpg" alt="" width="80" height="80" align="middle"></a></p>
 <p style="text-align: center;"><img src="https://radar.weather.gov/ridge/standard/KFWS_loop.gif" alt="" width="60" height="55" align="middle">&nbsp;</p>
 
