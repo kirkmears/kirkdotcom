@@ -1,0 +1,17 @@
+#gallery {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	align-items: center;
+}
+
+#gallery a {
+	margin: 10px;
+}
+
+#gallery img {
+	display: block;
+	width: 100%;
+	height: auto;
+	object-fit: cover;
+}
