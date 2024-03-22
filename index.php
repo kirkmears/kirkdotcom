@@ -88,7 +88,7 @@
 
 	
 
-<p style="text-align: center;"><a href="https://www.kirkmears.com/lightning" target="_blank">Ford Lightning Pictures 1</a></p>
+<p style="text-align: center;"><a href="https://kirkdotcom.azurewebsites.net/lightning" target="_blank">Ford Lightning Pictures 1</a></p>
 <p style="text-align: center;"><a href="http://192.168.0.296/" target="_blank">Proton Docker nginx</a></p>
 <p style="text-align: center;"><a href="https://kirkdotcom.azurewebsites.net/mustang" target="_blank">mustang</a></p>
 <p style="text-align: center;"><a href="https://kirkdotcom.azurewebsites.net/cts" target="_blank">cts</a></p>
