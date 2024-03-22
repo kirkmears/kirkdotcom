@@ -1,14 +1,14 @@
 <!DOCTYPE html>
 <html>
 <head>
-	<title>GT80</title>
+	<title>CTS-V</title>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<link rel="stylesheet" type="text/css" href="style.css">
 	<script type="text/javascript" src="script.js"></script>
 </head>
 <body>
-	<h1>GT80</h1>
+	<h1>CTS-V</h1>
 	<div id="gallery">
 		<?php
 			$dir = "photos/";
