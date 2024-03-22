@@ -91,8 +91,8 @@
 <p style="text-align: center;"><a href="http://192.168.0.296/" target="_blank">Proton Docker nginx</a></p>
 <p style="text-align: center;"><a href="https://kirkdotcom.azurewebsites.net/mustang" target="_blank">mustang</a></p>
 <p style="text-align: center;"><a href="https://kirkdotcom.azurewebsites.net/cts" target="_blank">cts</a></p>
-<p style="text-align: center;"><a href="https://kirkdotcom.azurewebsites.net/lightning" target="_blank">Ford Lightning Pictures 1</a></p>
-<p style="text-align: center;"><a href="https://kirkdotcom.azurewebsites.net/impala" target="_blank">65 Chevy Impala</a></p>
+<p style="text-align: center;"><a href="https://kirkdotcom.azurewebsites.net/lightning" target="_blank">Truck</a></p>
+<p style="text-align: center;"><a href="https://kirkdotcom.azurewebsites.net/impala" target="_blank">impala</a></p>
 <p style="text-align: center;"><a href="https://kirkdotcom.azurewebsites.net/GT80" target="_blank">gt80</a></p>
 <p style="text-align: center;"><a href="https://kirkdotcom.azurewebsites.net/Army" target="_blank">Army</a></p>
 <p style="text-align: center;"><a href="http://192.168.0.239" target="_blank"><img src="icons/index.html" alt="" width="0" height="0" align="middle"></a></p>
