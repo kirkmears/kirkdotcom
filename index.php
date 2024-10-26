@@ -49,7 +49,7 @@
         </tr>
         <tr>
             <td style="text-align: center;"><a href="https://192.168.1.5/" target="_blank"><img src="icons/220px-TPLINK_Logo_2.png" alt="" width="65" height="31"></a></td>
-            <td style="text-align: center;"><a href="http://192.168.1.2/" target="_blank"><span style="background-color: rgb(0, 0, 0);"><img src="icons/tplink.png" alt="" width="90" height="34"></span></a></td>
+            <td style="text-align: center;"><a href="http://192.168.3.65:7860/" target="_blank"><img src="icons/Comfy.avif" alt="" width="42" height="42"></a></td>
             <td style="text-align: center;"><a href="https://drivetexas.org/#/13/32.8944/-96.8020?future=false&amp;resources=traffic&amp;resources=traffic-cameras&amp;sidebar=false" target="_blank"><img src="icons/ProhibitionSign2.svg" alt="" width="40" height="40"></a>&nbsp;</td>
             <td style="text-align: center;"><a href="http://192.168.1.19/photo/#!Albums" target="_blank"><img src="icons/photo_station.jpg" alt="" width="45" height="34"></a></td>
             <td style="text-align: center;"><a href="https://fiatleak.com/" target="_blank">fiatleak.com</a>&nbsp;</td>
