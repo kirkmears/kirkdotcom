@@ -126,7 +126,7 @@
 <p style="text-align: center;"><a href="http://192.168.0.239" target="_blank"><img src="icons/splash.jpg" alt="" width="80" height="80" align="middle"></a></p>
 <p style="text-align: center;">
   <a href="https://radar.weather.gov/ridge/standard/CONUS-LARGE_loop.gif" target="_blank">
-    <img src="https://radar.weather.gov/ridge/standard/CONUS-LARGE_loop.gif" alt="" width="170" height="80" align="middle">
+    <img src="https://radar.weather.gov/ridge/standard/CONUS-LARGE_loop.gif" alt="" width="680" height="320" align="middle">
   </a>
 </p>
 	<tr>
