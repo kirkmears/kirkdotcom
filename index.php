@@ -124,8 +124,9 @@
 <p style="text-align: center;"><a href="https://www.kirkmears.com/gt80" target="_blank">gt80</a></p>
 <p style="text-align: center;"><a href="https://www.kirkmears.com/army" target="_blank">army</a></p>	    
 <p style="text-align: center;"><a href="http://192.168.0.239" target="_blank"><img src="icons/splash.jpg" alt="" width="80" height="80" align="middle"></a></p>
-<p style="text-align: center;"><img src="https://radar.weather.gov/ridge/standard/KFWS_loop.gif" alt="" width="60" height="55" align="middle">&nbsp;</p>
-<p style="text-align: center;"><a href="https://www.weather.gov/forecastpoints?lat=32.793333&lon=-96.766513&clat=32.793333&clon=-96.766513&zoom=16&bbox=[-19719439.353,1706090.691,-1372338.093,10673494.116]&layers=RangeRings,USStates,USCounties,ForecastPointPolygon,ForecastPoint,Domain,&order=12,5,6,0,1,4,7,10,11&obs=ttffffft&countyNames=t"  target="_blank">Eclipse Forecast</a></p>
+<p style="text-align: center;"><img src="https://radar.weather.gov/ridge/standard/CONUS-LARGE_loop.gif" alt="" width="170" height="80" align="middle">&nbsp;</p>
+<p style="text-align: center;"><a href="a href="https://radar.weather.gov/ridge/standard/CONUS-LARGE_loop.gif" target="_blank"><img src="https://radar.weather.gov/ridge/standard/CONUS-LARGE_loop.gif" alt="" width="85" height="40"></a></td>
+
 	<tr>
 
         </tr>
