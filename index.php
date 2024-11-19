@@ -25,8 +25,7 @@
 
 
 <table width="750" height="50" cellspacing="10" cellpadding="10" border="5" align="center">
-    <tbody>
-      
+    <tbody>      
         <tr>
             <td style="text-align: center;"><a href="http://192.168.1.19:8080/" target="_blank"><img src="icons/OI.logo.png" alt="" width="42" height="42"></a></td>
             <td style="text-align: center;"><a href="http://192.168.3.50:8123/" target="_blank"><img src="icons/homeass.png" alt="" width="40" height="40"></a></td>
