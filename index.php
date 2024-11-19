@@ -26,13 +26,7 @@
 
 <table width="750" height="50" cellspacing="10" cellpadding="10" border="5" align="center">
     <tbody>
-        <tr>
-            <td style="text-align: center;"><a href="https://www.fox.com/live/" target="_blank"><span style="background-color: rgb(0, 0, 0);"><img src="icons/fox.png" alt="" width="50" height="22" border="2"></span></a></td>
-            <td style="text-align: center;"><a href="http://www.nbc.com/live" target="_blank"><img src="icons/kxas-desktop-160x90-color.png" alt="" width="50" height="34"></a></td>
-            <td style="text-align: center;"><a href="http://www.amc.com/livestream" target="_blank"><img src="icons/amc_logo_bk_bg.svg" alt="" width="50"></a></td>
-            <td style="text-align: center;"><a href="http://www.tbs.com/watchtbs/west" target="_blank"><img src="icons/latest.svg" alt="" width="50" height="29"></a></td>
-            <td style="text-align: center;"><a href="https://www.revntv.com/home" target="_blank"><img src="icons/logo_revntv.png" alt="" width="79" height="26"></a></td>
-        </tr>
+      
         <tr>
             <td style="text-align: center;"><a href="http://192.168.1.19:8080/" target="_blank"><img src="icons/OI.logo.png" alt="" width="42" height="42"></a></td>
             <td style="text-align: center;"><a href="http://192.168.3.50:8123/" target="_blank"><img src="icons/homeass.png" alt="" width="40" height="40"></a></td>
