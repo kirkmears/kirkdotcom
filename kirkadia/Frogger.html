@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Frogger HTML5 Clone</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; height: 100%; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { background: #000; display: block; }
+  .wrap { text-align: center; }
+  p { color: #888; font: 12px monospace; margin: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="game" width="800" height="600"></canvas>
+  <p>Arrow keys hop &middot; ENTER start</p>
+</div>
+
+<script>
+"use strict";
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = 800, H = 600;
+const LANE_H = 40;
+
+// lanes: 0 home, 1-5 river, 6 median, 7-11 road, 12 start
+const lanes = [];
+for (let i = 0; i <= 12; i++) {
+  lanes.push({
+    i: i, y: 80 + i * LANE_H,
+    type: i === 0 ? "home" : i <= 5 ? "river" : i === 6 ? "median" : i <= 11 ? "road" : "start"
+  });
+}
+
+let state = "menu";
+let score = 0, hiScore = 0, lives = 3, level = 1;
+let frog = null, hop = null;
+let vehicles = [], riverObjs = [], slots = [];
+let timeLeft = 30, clock = 0, timer = 0;
+const keys = {};
+let dtGlobal = 0;
+
+let audio = null;
+function beep(freq, dur = 0.1) {
+  try {
+    if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.connect(g); g.connect(audio.destination);
+    o.frequency.value = freq; g.gain.value = 0.07;
+    o.start(); o.stop(audio.currentTime + dur);
+  } catch (e) {}
+}
+
+function aabb(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x &&
+         a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function laneOf(y) { return Math.round((y - 84) / LANE_H); }
+
+function resetFrog() {
+  frog = { x: W / 2 - 15, y: lanes[12].y + 4, w: 30, h: 32 };
+  hop = null;
+}
+
+function initObjects() {
+  const m = 1 + (level - 1) * 0.2;
+  vehicles = [];
+  const roadSpec = [
+    { lane: 7, type: "car", dir: 1, speed: 60, color: "#e03024" },
+    { lane: 8, type: "truck", dir: -1, speed: 50, color: "#c8c8c8" },
+    { lane: 9, type: "car", dir: 1, speed: 75, color: "#7cf" },
+    { lane: 10, type: "truck", dir: -1, speed: 55, color: "#f7f" },
+    { lane: 11, type: "car", dir: 1, speed: 85, color: "#ff7" }
+  ];
+  for (const s of roadSpec) {
+    const w = s.type === "car" ? 64 : 96;
+    const n = s.type === "car" ? 3 : 2;
+    for (let i = 0; i < n; i++)
+      vehicles.push({ x: i * (W / n) + (s.lane % 2 ? 30 : 0), y: lanes[s.lane].y + 4,
+        w: w, h: 32, lane: s.lane, dir: s.dir, speed: s.speed * m, type: s.type, color: s.color });
+  }
+
+  riverObjs = [];
+  const riverSpec = [
+    { lane: 1, type: "log", dir: 1, speed: 40 },
+    { lane: 2, type: "turtle", dir: -1, speed: 30 },
+    { lane: 3, type: "log", dir: 1, speed: 50 },
+    { lane: 4, type: "turtle", dir: -1, speed: 35 },
+    { lane: 5, type: "log", dir: 1, speed: 45, croc: true }
+  ];
+  for (const s of riverSpec) {
+    if (s.type === "log") {
+      const n = 3;
+      for (let i = 0; i < n; i++)
+        riverObjs.push({ x: i * (W / n) + 40, y: lanes[s.lane].y + 4, w: 120, h: 32,
+          lane: s.lane, dir: s.dir, speed: s.speed * m, type: "log" });
+    } else if (s.type === "turtle") {
+      const n = 3;
+      for (let i = 0; i < n; i++)
+        riverObjs.push({ x: i * (W / n) + 80, y: lanes[s.lane].y + 4, w: 80, h: 32,
+          lane: s.lane, dir: s.dir, speed: s.speed * m, type: "turtle", phase: Math.random() * 4 });
+    }
+    if (s.croc)
+      riverObjs.push({ x: W / 2 + 200, y: lanes[s.lane].y + 4, w: 100, h: 32,
+        lane: s.lane, dir: s.dir, speed: s.speed * m, type: "croc" });
+  }
+
+  slots = [];
+  for (let i = 0; i < 5; i++)
+    slots.push({ x: 30 + i * 150, y: lanes[0].y, w: 70, h: 40, filled: false });
+}
+
+function startHop(dir) {
+  const f = frog;
+  let tx = f.x, ty = f.y;
+  if (dir === "up") ty = f.y - LANE_H;
+  else if (dir === "down") ty = f.y + LANE_H;
+  else if (dir === "left") tx = f.x - 20;
+  else if (dir === "right") tx = f.x + 20;
+  if (ty < lanes[0].y + 4 || ty > lanes[12].y + 4) return;
+  if (tx < 0 || tx + f.w > W) return;
+  hop = { fromX: f.x, fromY: f.y, toX: tx, toY: ty, t: 0, dur: 0.12 };
+  beep(500, 0.05);
+}
+
+function updateFrog(dt) {
+  if (!hop) return;
+  hop.t += dt;
+  const k = Math.min(1, hop.t / hop.dur);
+  frog.x = hop.fromX + (hop.toX - hop.fromX) * k;
+  frog.y = hop.fromY + (hop.toY - hop.fromY) * k;
+  if (k >= 1) { frog.x = hop.toX; frog.y = hop.toY; hop = null; }
+}
+
+function updateObjects(dt) {
+  const all = vehicles.concat(riverObjs);
+  for (const o of all) {
+    o.x += o.dir * o.speed * dt;
+    if (o.dir > 0 && o.x > W + 60) o.x = -o.w - 60;
+    if (o.dir < 0 && o.x + o.w < -60) o.x = W + 60;
+  }
+  clock += dt;
+  for (const o of riverObjs)
+    if (o.type === "turtle") o.sub = ((clock + o.phase) % 4.0) < 1.5;
+}
+
+function killFrog() {
+  if (state !== "play") return;
+  state = "dead"; timer = 1.4;
+  hop = null;
+  beep(80, 0.4);
+}
+
+function fillHome(s) {
+  score += 50 + Math.floor(timeLeft) * 5;
+  beep(900, 0.15);
+  resetFrog();
+  if (slots.every(x => x.filled)) {
+    state = "levelup"; timer = 2;
+  }
+}
+
+function collisions(dt) {
+  const f = frog;
+  const lane = laneOf(f.y);
+  if (lane === 0) {
+    let hit = false;
+    for (const s of slots) {
+      if (!s.filled && aabb(f, s)) { s.filled = true; fillHome(s); return; }
+    }
+    if (!hit) killFrog();
+    return;
+  }
+  if (lane >= 1 && lane <= 5) {
+    let ride = null;
+    for (const o of riverObjs) {
+      if (o.lane !== lane) continue;
+      if (aabb(f, o)) {
+        if (o.type === "croc") { killFrog(); return; }
+        if (o.type === "turtle" && o.sub) { killFrog(); return; }
+        ride = o;
+      }
+    }
+    if (!ride) { killFrog(); return; }
+    f.x += ride.dir * ride.speed * dt;
+    if (f.x < 0 || f.x + f.w > W) { killFrog(); return; }
+  }
+  if (lane >= 7 && lane <= 11) {
+    for (const v of vehicles) {
+      if (v.lane !== lane) continue;
+      if (aabb(f, v)) { killFrog(); return; }
+    }
+  }
+}
+
+function update(dt) {
+  dtGlobal = dt;
+  if (score > hiScore) hiScore = score;
+  if (state === "play") {
+    updateFrog(dt);
+    updateObjects(dt);
+    if (!hop) collisions(dt);
+    timeLeft -= dt;
+    if (timeLeft <= 0) killFrog();
+  } else if (state === "dead" || state === "levelup") {
+    updateObjects(dt);
+    timer -= dt;
+    if (timer <= 0) {
+      if (state === "dead") {
+        lives--;
+        timeLeft = 30;
+        resetFrog();
+        if (lives > 0) state = "play";
+        else state = "gameover";
+      } else {
+        level++;
+        timeLeft = 30;
+        initObjects();
+        resetFrog();
+        state = "play";
+      }
+    }
+  }
+}
+
+function drawLanes() {
+  for (const l of lanes) {
+    if (l.type === "river" || l.type === "home") {
+      ctx.fillStyle = "#0a6d70";
+      ctx.fillRect(0, l.y, W, LANE_H);
+    } else if (l.type === "road") {
+      ctx.fillStyle = "#333";
+      ctx.fillRect(0, l.y, W, LANE_H);
+      ctx.fillStyle = "#555";
+      for (let x = 0; x < W; x += 40) ctx.fillRect(x, l.y + LANE_H / 2 - 1, 20, 2);
+    } else {
+      ctx.fillStyle = "#2a2";
+      ctx.fillRect(0, l.y, W, LANE_H);
+      ctx.fillStyle = "#3a3";
+      for (let x = 8; x < W; x += 24) ctx.fillRect(x, l.y + 8, 3, 3);
+    }
+  }
+}
+
+function drawSlots() {
+  for (const s of slots) {
+    ctx.fillStyle = "#021";
+    ctx.fillRect(s.x, s.y, s.w, s.h);
+    ctx.strokeStyle = "#7cf";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(s.x, s.y, s.w, s.h);
+    if (s.filled) {
+      ctx.fillStyle = "#7f7";
+      ctx.beginPath(); ctx.ellipse(s.x + s.w / 2, s.y + s.h / 2, 12, 10, 0, 0, 7); ctx.fill();
+    }
+  }
+}
+
+function drawFrog() {
+  const f = frog;
+  if (!f) return;
+  const cx = f.x + f.w / 2;
+  ctx.fillStyle = "#7f7";
+  ctx.beginPath(); ctx.ellipse(cx, f.y + f.h / 2, f.w / 2 - 4, f.h / 2 - 4, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(cx - 8, f.y + 4, 4, 4); ctx.fillRect(cx + 4, f.y + 4, 4, 4);
+  ctx.fillStyle = "#000";
+  ctx.fillRect(cx - 7, f.y + 5, 2, 2); ctx.fillRect(cx + 5, f.y + 5, 2, 2);
+  ctx.fillStyle = "#7f7";
+  const legY = hop ? f.y + f.h - 2 : f.y + f.h - 6;
+  ctx.fillRect(f.x + 2, legY, 6, 4); ctx.fillRect(f.x + f.w - 8, legY, 6, 4);
+}
+
+function drawVehicle(v) {
+  ctx.fillStyle = v.color;
+  if (v.type === "car") {
+    ctx.fillRect(v.x, v.y + 8, v.w, v.h - 12);
+    ctx.fillRect(v.x + v.w / 4, v.y, v.w / 2, 10);
+    ctx.fillStyle = "#000";
+    ctx.fillRect(v.x + 8, v.y + v.h - 4, 8, 4); ctx.fillRect(v.x + v.w - 16, v.y + v.h - 4, 8, 4);
+  } else {
+    ctx.fillRect(v.x, v.y + 4, v.w, v.h - 8);
+    ctx.fillRect(v.x + (v.dir > 0 ? v.w - 20 : 0), v.y, 20, v.h - 4);
+    ctx.fillStyle = "#000";
+    ctx.fillRect(v.x + 10, v.y + v.h - 4, 10, 4); ctx.fillRect(v.x + v.w - 20, v.y + v.h - 4, 10, 4);
+  }
+}
+
+function drawRiverObj(o) {
+  if (o.type === "log") {
+    ctx.fillStyle = "#a06a2a";
+    ctx.fillRect(o.x, o.y, o.w, o.h);
+    ctx.fillStyle = "#5b3a12";
+    ctx.fillRect(o.x + 4, o.y + 4, 6, o.h - 8);
+    ctx.fillRect(o.x + o.w - 10, o.y + 4, 6, o.h - 8);
+    ctx.beginPath(); ctx.arc(o.x + o.w / 2, o.y + o.h / 2, 4, 0, 7); ctx.fill();
+  } else if (o.type === "turtle") {
+    for (let i = 0; i < 2; i++) {
+      const cx = o.x + 14 + i * 28;
+      ctx.fillStyle = o.sub ? "#234" : "#7f7";
+      ctx.beginPath(); ctx.arc(cx, o.y + o.h / 2, 12, 0, 7); ctx.fill();
+      if (!o.sub) {
+        ctx.fillStyle = "#2a2";
+        ctx.beginPath(); ctx.arc(cx, o.y + o.h / 2, 7, 0, 7); ctx.fill();
+      } else {
+        ctx.fillStyle = "#7cf";
+        ctx.fillRect(cx - 2, o.y + 4, 4, 4);
+      }
+    }
+  } else if (o.type === "croc") {
+    ctx.fillStyle = "#2a2";
+    ctx.fillRect(o.x, o.y + 8, o.w, o.h - 16);
+    ctx.fillStyle = "#2a2";
+    ctx.beginPath();
+    ctx.moveTo(o.x + o.w - 30, o.y + 8); ctx.lineTo(o.x + o.w - 6, o.y + o.h / 2);
+    ctx.lineTo(o.x + o.w - 30, o.y + o.h - 8); ctx.fill();
+    ctx.fillStyle = "#e03024";
+    ctx.fillRect(o.x + o.w - 24, o.y + 12, 18, 8);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(o.x + o.w - 26, o.y + 10, 4, 4);
+  }
+}
+
+function drawHUD() {
+  ctx.fillStyle = "#fff"; ctx.font = "16px monospace";
+  ctx.textAlign = "left";
+  ctx.fillText("SCORE " + score, 10, 20);
+  ctx.fillText("LEVEL " + level, 10, 40);
+  ctx.textAlign = "right";
+  ctx.fillText("HI " + hiScore, W - 10, 20);
+  ctx.fillText("LIVES " + lives, W - 10, 40);
+  ctx.fillStyle = "#4f4";
+  ctx.fillRect(W / 2 - 100, 10, 200 * (timeLeft / 30) * 1 || 0, 10);
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 1;
+  ctx.strokeRect(W / 2 - 100, 10, 200, 10);
+}
+
+function overlayText(lines, color, size, dy) {
+  ctx.fillStyle = color; ctx.font = size + "px monospace"; ctx.textAlign = "center";
+  lines.forEach((s, i) => ctx.fillText(s, W / 2, dy + i * (size + 10)));
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  drawLanes();
+  drawSlots();
+  for (const v of vehicles) drawVehicle(v);
+  for (const o of riverObjs) drawRiverObj(o);
+  drawFrog();
+  drawHUD();
+
+  if (state === "menu") {
+    ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(0, 0, W, H);
+    overlayText(["FROGGER"], "#7f7", 48, 200);
+    overlayText(["HTML5 CLONE"], "#7cf", 20, 260);
+    overlayText(["Hop across the road and river to fill all home bays!", "Press ENTER to start"], "#fff", 16, 340);
+  }
+  if (state === "dead") overlayText(["OUCH!"], "#e03024", 32, 300);
+  if (state === "levelup") overlayText(["LEVEL " + level + " COMPLETED!"], "#7f7", 28, 300);
+  if (state === "gameover") {
+    ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(0, 0, W, H);
+    overlayText(["GAME OVER", "Press ENTER"], "#e03024", 32, 300);
+  }
+}
+
+addEventListener("keydown", e => {
+  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Space"].includes(e.code))
+    e.preventDefault();
+  keys[e.code] = true;
+  if (state === "play" && !hop) {
+    if (e.code === "ArrowUp") startHop("up");
+    else if (e.code === "ArrowDown") startHop("down");
+    else if (e.code === "ArrowLeft") startHop("left");
+    else if (e.code === "ArrowRight") startHop("right");
+  }
+  if (e.code === "Enter") {
+    if (state === "menu") {
+      score = 0; lives = 3; level = 1; timeLeft = 30;
+      initObjects(); resetFrog();
+      state = "play";
+    } else if (state === "gameover") state = "menu";
+  }
+});
+addEventListener("keyup", e => keys[e.code] = false);
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+initObjects();
+resetFrog();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

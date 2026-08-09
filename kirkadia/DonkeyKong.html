@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Donkey Kong HTML5 Clone</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; height: 100%; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { background: #000; display: block; }
+  .wrap { text-align: center; }
+  p { color: #888; font: 12px monospace; margin: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="game" width="800" height="600"></canvas>
+  <p>&larr; &rarr; move &middot; &uarr; &darr; ladders &middot; SPACE jump &middot; ENTER start</p>
+</div>
+
+<script>
+"use strict";
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = 800, H = 600;
+
+// ---------- physics ----------
+const GRAV = 0.4, JUMP_V = 6.0, MOVE = 2.4, CLIMB = 1.8, GIRDER_H = 14;
+
+// ---------- level data (staggered girders, like the classic 25m stage) ----------
+const girders = [
+  { x: 0,  y: 580, w: 800 }, // 0 bottom (full width)
+  { x: 0,  y: 500, w: 720 }, // 1 (gap right)
+  { x: 80, y: 420, w: 720 }, // 2 (gap left)
+  { x: 0,  y: 340, w: 720 }, // 3
+  { x: 80, y: 260, w: 720 }, // 4
+  { x: 0,  y: 180, w: 720 }, // 5
+  { x: 80, y: 100, w: 720 }, // 6 top
+];
+
+// ladders connect adjacent girders (lower = lower index, upper = upper index)
+const ladders = [
+  { x: 80,  lower: 0, upper: 1 }, { x: 600, lower: 0, upper: 1 },
+  { x: 120, lower: 1, upper: 2 }, { x: 600, lower: 1, upper: 2 },
+  { x: 200, lower: 2, upper: 3 }, { x: 600, lower: 2, upper: 3 },
+  { x: 120, lower: 3, upper: 4 }, { x: 500, lower: 3, upper: 4 },
+  { x: 300, lower: 4, upper: 5 }, { x: 600, lower: 4, upper: 5 },
+  { x: 400, lower: 5, upper: 6 }, { x: 650, lower: 5, upper: 6 },
+];
+
+const dk = { x: 140, girder: 6 };      // big ape at top-left
+const damsel = { x: 660, girder: 6 };  // damsel at top-right
+
+// ---------- game state ----------
+let state = "menu";                    // menu | play | dead | win | gameover
+let score = 0, lives = 3, level = 1, bonus = 0;
+let player = null, barrels = [], item = null;
+let spawnTimer = 0, spawnInterval = 180, barrelSpeed = 1.6;
+let timer = 0;
+const keys = {};
+
+// ---------- tiny audio ----------
+let audio = null;
+function beep(freq, dur = 0.12) {
+  try {
+    if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.connect(g); g.connect(audio.destination);
+    o.frequency.value = freq; g.gain.value = 0.08;
+    o.start(); o.stop(audio.currentTime + dur);
+  } catch (e) {}
+}
+
+// ---------- helpers ----------
+function landOnGirder(o, oldY, newY) {
+  let best = null;
+  for (let i = 0; i < girders.length; i++) {
+    const g = girders[i];
+    if (g.y >= oldY && g.y <= newY && o.x >= g.x && o.x <= g.x + g.w)
+      if (!best || g.y < best.y) best = { i, y: g.y };
+  }
+  return best;
+}
+
+function resetPlayer() {
+  player = { x: 120, y: girders[0].y, girder: 0, state: "ground",
+             vy: 0, run: 0, face: 1, ladder: null, climbT: 0 };
+}
+
+function setupLevel() {
+  bonus = 4000 + 1000 * (level - 1);
+  spawnInterval = Math.max(60, 180 - 20 * (level - 1));
+  barrelSpeed = 1.6 + 0.2 * (level - 1);
+  barrels = [];
+  spawnTimer = spawnInterval;
+  item = { x: 300, girder: 3 };        // bonus item (purse)
+  resetPlayer();
+}
+
+function spawnBarrel() {
+  barrels.push({ x: dk.x - 50, y: girders[6].y, girder: 6,
+                 dir: -1, state: "roll", vy: 0, rot: 0, jumped: false });
+}
+
+function updateBarrel(b) {
+  if (b.state === "roll") {
+    b.x += b.dir * barrelSpeed;
+    b.rot += b.dir * 0.12;
+    const g = girders[b.girder];
+    if (b.x < g.x || b.x > g.x + g.w) { b.state = "fall"; b.vy = 0; }
+  } else {
+    const oldY = b.y;
+    b.vy += GRAV * 0.5;
+    b.y += b.vy;
+    const land = landOnGirder(b, oldY, b.y);
+    if (land) {
+      b.state = "roll"; b.girder = land.i; b.y = land.y;
+      b.dir = -b.dir;                    // reverse -> classic zig-zag descent
+    } else if (b.y > H + 40) b.dead = true;
+  }
+}
+
+function enterClimb(p, dir) {
+  for (const l of ladders) {
+    if (Math.abs(p.x - l.x) < 14 &&
+        ((dir === "up" && l.lower === p.girder) ||
+         (dir === "down" && l.upper === p.girder))) {
+      p.state = "climb"; p.ladder = l; p.x = l.x; p.climbT = 0;
+      return true;
+    }
+  }
+  return false;
+}
+
+function updatePlayer() {
+  const p = player;
+  if (p.state === "ground") {
+    if (keys["ArrowLeft"])  { p.x -= MOVE; p.run += MOVE; p.face = -1; }
+    if (keys["ArrowRight"]) { p.x += MOVE; p.run += MOVE; p.face = 1; }
+    if (keys["ArrowUp"] && enterClimb(p, "up")) return;
+    if (keys["ArrowDown"] && enterClimb(p, "down")) return;
+    if (keys["Space"]) { p.vy = -JUMP_V; p.state = "fall"; beep(420, 0.08); return; }
+    const g = girders[p.girder];
+    if (p.x < g.x || p.x > g.x + g.w) { p.state = "fall"; p.vy = 0; }
+  } else if (p.state === "climb") {
+    if (keys["ArrowUp"])   { p.y -= CLIMB; p.climbT += CLIMB; }
+    if (keys["ArrowDown"]) { p.y += CLIMB; p.climbT += CLIMB; }
+    const l = p.ladder;
+    const topY = girders[l.upper].y, botY = girders[l.lower].y;
+    if (p.y <= topY) { p.y = topY; p.state = "ground"; p.girder = l.upper; }
+    if (p.y >= botY) { p.y = botY; p.state = "ground"; p.girder = l.lower; }
+  } else if (p.state === "fall") {
+    if (keys["ArrowLeft"])  p.x -= MOVE * 0.85;
+    if (keys["ArrowRight"]) p.x += MOVE * 0.85;
+    const oldY = p.y;
+    p.vy += GRAV; p.y += p.vy;
+    if (p.vy > 0) {
+      const land = landOnGirder(p, oldY, p.y);
+      if (land) { p.y = land.y; p.girder = land.i; p.state = "ground"; p.vy = 0; }
+    }
+    if (p.y > H + 40) killPlayer();
+  }
+}
+
+function killPlayer() {
+  if (state !== "play") return;
+  state = "dead"; timer = 90; beep(120, 0.35);
+}
+
+function winLevel() {
+  state = "win"; timer = 120; beep(600, 0.4);
+}
+
+function checkCollisions() {
+  const p = player;
+  for (const b of barrels) {
+    if (Math.abs(b.x - p.x) < 14) {
+      const bTop = b.y - 20;
+      if (p.state === "fall") {
+        if (p.y <= bTop) {               // jumped over the barrel
+          if (!b.jumped) { b.jumped = true; score += 100; beep(700, 0.08); }
+        } else killPlayer();             // fell onto the barrel
+      } else killPlayer();               // touching while standing/climbing
+    }
+  }
+  if (item && p.state === "ground" && p.girder === item.girder &&
+      Math.abs(p.x - item.x) < 16) {
+    score += 500; item = null; beep(900, 0.15);
+  }
+  if (p.state === "ground" && p.girder === 6 &&
+      Math.abs(p.x - damsel.x) < 40) winLevel();
+}
+
+function update() {
+  if (state === "play") {
+    if (--spawnTimer <= 0) { spawnBarrel(); spawnTimer = spawnInterval; }
+    for (const b of barrels) updateBarrel(b);
+    barrels = barrels.filter(b => !b.dead);
+    updatePlayer();
+    checkCollisions();
+    bonus = Math.max(0, bonus - 5);
+  } else if (state === "dead" || state === "win") {
+    if (--timer <= 0) {
+      if (state === "dead") {
+        lives--;
+        if (lives > 0) { barrels = []; spawnTimer = spawnInterval; resetPlayer(); state = "play"; }
+        else state = "gameover";
+      } else {
+        score += bonus;
+        level++;
+        setupLevel();
+        state = "play";
+      }
+    }
+  }
+}
+
+// ---------- drawing ----------
+function drawGirders() {
+  for (const g of girders) {
+    ctx.fillStyle = "#d23a2e";
+    ctx.fillRect(g.x, g.y, g.w, GIRDER_H);
+    ctx.fillStyle = "#f78058";
+    ctx.fillRect(g.x, g.y, g.w, 3);
+    ctx.fillStyle = "#7a1408";
+    for (let x = g.x + 8; x < g.x + g.w - 4; x += 16)
+      ctx.fillRect(x, g.y + GIRDER_H / 2 - 1, 3, 3);   // rivets
+  }
+}
+
+function drawLadders() {
+  ctx.strokeStyle = "#7ad3c8";
+  for (const l of ladders) {
+    const top = girders[l.upper].y, bot = girders[l.lower].y + GIRDER_H;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(l.x - 6, top); ctx.lineTo(l.x - 6, bot);
+    ctx.moveTo(l.x + 6, top); ctx.lineTo(l.x + 6, bot);
+    ctx.stroke();
+    ctx.lineWidth = 2;
+    for (let y = top + 6; y < bot; y += 12) {
+      ctx.beginPath(); ctx.moveTo(l.x - 6, y); ctx.lineTo(l.x + 6, y); ctx.stroke();
+    }
+  }
+}
+
+function drawPlayer() {
+  const p = player;
+  if (!p) return;
+  const x = p.x, y = p.y;
+  const anim = p.state === "climb" ? p.climbT : p.run;
+  const off = Math.sin(anim * 0.35) * 3;
+  ctx.fillStyle = "#1c4e8a";                        // legs
+  ctx.fillRect(x - 6 + (p.state === "ground" ? off : 0), y - 4, 5, 4);
+  ctx.fillRect(x + 1 - (p.state === "ground" ? off : 0), y - 4, 5, 4);
+  ctx.fillStyle = "#2e7ac8";                        // overalls
+  ctx.fillRect(x - 6, y - 14, 12, 10);
+  ctx.fillStyle = "#ffbd8a";                        // head
+  ctx.fillRect(x - 5, y - 22, 10, 8);
+  ctx.fillStyle = "#e03024";                        // cap
+  ctx.fillRect(x - 6, y - 24, 12, 3);
+}
+
+function drawBarrel(b) {
+  ctx.save();
+  ctx.translate(b.x, b.y - 10);
+  ctx.fillStyle = "#a06a2a";
+  ctx.beginPath(); ctx.arc(0, 0, 10, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "#5b3a12"; ctx.lineWidth = 3;
+  ctx.rotate(b.rot);
+  ctx.beginPath(); ctx.moveTo(-10, 0); ctx.lineTo(10, 0);
+  ctx.moveTo(0, -10); ctx.lineTo(0, 10); ctx.stroke();
+  ctx.restore();
+}
+
+function drawDK() {
+  const x = dk.x, base = girders[6].y;
+  const t = Math.floor(performance.now() / 200) % 2;
+  ctx.fillStyle = "#8f5a2a";
+  ctx.fillRect(x - 24, base - 12, 16, 12);           // feet
+  ctx.fillRect(x + 8,  base - 12, 16, 12);
+  ctx.beginPath(); ctx.ellipse(x, base - 45, 26, 34, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x, base - 90, 24, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#f5c48a";                         // face
+  ctx.beginPath(); ctx.arc(x, base - 86, 16, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#000";
+  ctx.fillRect(x - 8, base - 90, 4, 4); ctx.fillRect(x + 4, base - 90, 4, 4);
+  ctx.fillStyle = "#8f5a2a";                         // chest-beating arms
+  ctx.fillRect(x - 30, base - 60 + (t ? 8 : 0), 12, 30);
+  ctx.fillRect(x + 18, base - 60 + (t ? 0 : 8), 12, 30);
+}
+
+function drawDamsel() {
+  const x = damsel.x, base = girders[6].y;
+  ctx.fillStyle = "#e86ba8";
+  ctx.beginPath(); ctx.moveTo(x - 12, base); ctx.lineTo(x + 12, base);
+  ctx.lineTo(x, base - 26); ctx.fill();
+  ctx.fillStyle = "#ffbd8a";
+  ctx.beginPath(); ctx.arc(x, base - 30, 8, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#f5d76a";
+  ctx.beginPath(); ctx.arc(x, base - 34, 8, Math.PI, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#fff"; ctx.font = "10px monospace"; ctx.textAlign = "center";
+  ctx.fillText("HELP!", x, base - 44);
+}
+
+function drawItem() {
+  if (!item) return;
+  const x = item.x, base = girders[item.girder].y;
+  ctx.fillStyle = "#d6e6f5"; ctx.fillRect(x - 8, base - 14, 16, 12);
+  ctx.fillStyle = "#9ab";    ctx.fillRect(x - 6, base - 18, 12, 4);
+}
+
+function drawHUD() {
+  ctx.fillStyle = "#fff"; ctx.font = "16px monospace";
+  ctx.textAlign = "left";
+  ctx.fillText("LEVEL " + level, 10, 20);
+  ctx.fillText("LIVES " + lives, 10, 40);
+  ctx.textAlign = "center";
+  ctx.fillText("BONUS " + bonus, W / 2, 20);
+  ctx.textAlign = "right";
+  ctx.fillText("SCORE " + score, W - 10, 20);
+}
+
+function overlayText(lines, color, size, dy) {
+  ctx.fillStyle = color; ctx.font = size + "px monospace"; ctx.textAlign = "center";
+  lines.forEach((s, i) => ctx.fillText(s, W / 2, dy + i * (size + 10)));
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  drawGirders(); drawLadders(); drawDK(); drawDamsel(); drawItem();
+  for (const b of barrels) drawBarrel(b);
+  drawPlayer();
+  drawHUD();
+
+  if (state === "menu") {
+    ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(0, 0, W, H);
+    overlayText(["DONKEY KONG"], "#e03024", 48, 200);
+    overlayText(["HTML5 CLONE"], "#7ad3c8", 20, 260);
+    overlayText(["Climb to the top and rescue the damsel!", "Press ENTER to start"], "#fff", 16, 340);
+  }
+  if (state === "dead") overlayText(["OUCH!"], "#e03024", 32, 300);
+  if (state === "win") overlayText(["LEVEL " + level + " COMPLETED!", "BONUS +" + bonus], "#7ad3c8", 24, 300);
+  if (state === "gameover") {
+    ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(0, 0, W, H);
+    overlayText(["GAME OVER", "Press ENTER"], "#e03024", 32, 300);
+  }
+}
+
+// ---------- input ----------
+addEventListener("keydown", e => {
+  if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Space"].includes(e.code))
+    e.preventDefault();
+  keys[e.code] = true;
+  if (e.code === "Enter") {
+    if (state === "menu") { score = 0; lives = 3; level = 1; setupLevel(); state = "play"; }
+    else if (state === "gameover") state = "menu";
+  }
+});
+addEventListener("keyup", e => keys[e.code] = false);
+
+// ---------- main loop ----------
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+setupLevel();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

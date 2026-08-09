@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Galaga HTML5 Clone</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; height: 100%; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { background: #000; display: block; }
+  .wrap { text-align: center; }
+  p { color: #888; font: 12px monospace; margin: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="game" width="800" height="600"></canvas>
+  <p>&larr; &rarr; move &middot; SPACE fire &middot; ENTER start</p>
+</div>
+
+<script>
+"use strict";
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = 800, H = 600;
+
+const PLAYER_SPEED = 280;
+const MISSILE_SPEED = 520;
+const GRID_COLS = 8, GRID_ROWS = 4;
+const SLOT_SX = 56, SLOT_SY = 48;
+const GRID_X = W / 2 - (GRID_COLS - 1) * SLOT_SX / 2;
+const GRID_Y = 90;
+const MAX_MISSILES = 2;
+
+let state = "menu";
+let score = 0, hiScore = 0, lives = 3, stage = 1;
+let player = { x: W / 2 - 18, y: H - 70, w: 36, h: 26 };
+let enemies = [], missiles = [], bullets = [], explosions = [];
+let diveTimer = 3, timer = 0;
+const keys = {};
+
+let audio = null;
+function beep(freq, dur = 0.1) {
+  try {
+    if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.connect(g); g.connect(audio.destination);
+    o.frequency.value = freq; g.gain.value = 0.07;
+    o.start(); o.stop(audio.currentTime + dur);
+  } catch (e) {}
+}
+
+function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+function aabb(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x &&
+         a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function curvePos(e) {
+  const x = e.startX + (e.endX - e.startX) * e.t +
+            Math.sin(e.t * e.freq + e.phase) * e.amp;
+  const y = e.startY + (e.endY - e.startY) * e.t +
+            Math.sin(e.t * e.freq * 0.5 + e.phase * 2) * e.amp * 0.6;
+  return { x, y };
+}
+
+function makeEnemy(slot, index) {
+  const type = slot.r === 0 ? 2 : slot.r === 1 ? 1 : 0;
+  const slotX = GRID_X + slot.c * SLOT_SX;
+  const slotY = GRID_Y + slot.r * SLOT_SY;
+  const pattern = slot.c % 3;
+  const startX = pattern === 0 ? -60 : pattern === 1 ? W / 2 + (slot.c - 3.5) * 20 : W + 60;
+  const startY = pattern === 1 ? -60 : 200 + slot.r * 30;
+  return {
+    state: "entering",
+    slot: slot, slotX: slotX, slotY: slotY,
+    x: startX, y: startY, w: 28, h: 24,
+    type: type, points: type === 2 ? 60 : type === 1 ? 40 : 30,
+    t: 0, startX: startX, startY: startY, endX: slotX, endY: slotY,
+    amp: 30 + Math.random() * 40,
+    freq: 6 + Math.random() * 4,
+    phase: Math.random() * Math.PI,
+    curveSpeed: 0.45 + (stage - 1) * 0.05 + Math.random() * 0.2,
+    delay: 0.2 + index * 0.08,
+    vx: 0, vy: 0, seek: 0, bulletTimer: 0,
+    dead: false
+  };
+}
+
+function buildStage() {
+  enemies = [];
+  let i = 0;
+  for (let r = 0; r < GRID_ROWS; r++)
+    for (let c = 0; c < GRID_COLS; c++)
+      enemies.push(makeEnemy({ r, c }, i++));
+  missiles = []; bullets = [];
+  diveTimer = 3;
+}
+
+function selectDivers() {
+  const grid = enemies.filter(e => e.state === "grid");
+  const active = enemies.filter(e => e.state === "diving").length;
+  if (active >= 4 || !grid.length) return;
+  const n = Math.random() < 0.5 ? 2 : 1;
+  for (let i = 0; i < n && grid.length; i++) {
+    const e = grid.splice(Math.floor(Math.random() * grid.length), 1)[0];
+    e.state = "diving";
+    e.vx = 0;
+    e.vy = 120 + (stage - 1) * 20;
+    e.seek = 2.2 + (stage - 1) * 0.3;
+    e.bulletTimer = 0.5 + Math.random() * 0.5;
+  }
+}
+
+function spawnEnemyBullet(e) {
+  if (bullets.length >= 8) return;
+  bullets.push({
+    x: e.x + e.w / 2 - 1.5, y: e.y + e.h, w: 3, h: 10,
+    vy: 260 + (stage - 1) * 30
+  });
+}
+
+function fireMissile() {
+  if (missiles.length >= MAX_MISSILES) return;
+  missiles.push({
+    x: player.x + player.w / 2 - 1.5, y: player.y - 10, w: 3, h: 12,
+    vy: -MISSILE_SPEED
+  });
+  beep(700, 0.05);
+}
+
+function updatePlayer(dt) {
+  let dir = 0;
+  if (keys["ArrowLeft"]) dir = -1;
+  if (keys["ArrowRight"]) dir = 1;
+  player.x += dir * PLAYER_SPEED * dt;
+  player.x = clamp(player.x, 0, W - player.w);
+  if (keys["Space"]) fireMissile();
+}
+
+function updateMissiles(dt) {
+  for (const m of missiles) m.y += m.vy * dt;
+  missiles = missiles.filter(m => m.y + m.h > 0 && !m.dead);
+}
+
+function updateBullets(dt) {
+  for (const b of bullets) b.y += b.vy * dt;
+  bullets = bullets.filter(b => b.y < H + 20 && !b.dead);
+}
+
+function updateEnemies(dt) {
+  for (const e of enemies) {
+    if (e.state === "entering") {
+      e.delay -= dt;
+      if (e.delay <= 0) {
+        e.t += e.curveSpeed * dt;
+        const p = curvePos(e);
+        e.x = p.x; e.y = p.y;
+        if (e.t >= 1) { e.state = "grid"; e.x = e.slotX; e.y = e.slotY; }
+      }
+    } else if (e.state === "grid") {
+      e.x = e.slotX; e.y = e.slotY;
+    } else if (e.state === "diving") {
+      const targetX = player.x + player.w / 2 - e.w / 2;
+      e.vx += (targetX - e.x) * e.seek * dt;
+      e.vx = clamp(e.vx, -260, 260);
+      e.vy += 60 * dt;
+      e.vy = Math.min(e.vy, 300 + (stage - 1) * 20);
+      e.x += e.vx * dt; e.y += e.vy * dt;
+      e.bulletTimer -= dt;
+      if (e.bulletTimer <= 0) {
+        spawnEnemyBullet(e);
+        e.bulletTimer = Math.max(0.4, 0.9 - (stage - 1) * 0.05);
+      }
+      if (e.y > H - 60) {
+        e.state = "returning";
+        e.t = 0; e.startX = e.x; e.startY = e.y;
+        e.endX = e.slotX; e.endY = e.slotY;
+        e.amp = 20 + Math.random() * 30;
+        e.freq = 4 + Math.random() * 3;
+        e.phase = Math.random() * Math.PI;
+      }
+    } else if (e.state === "returning") {
+      e.t += e.curveSpeed * dt;
+      const p = curvePos(e);
+      e.x = p.x; e.y = p.y;
+      if (e.t >= 1) { e.state = "grid"; e.x = e.slotX; e.y = e.slotY; }
+    }
+  }
+}
+
+function updateExplosions(dt) {
+  for (const e of explosions) e.ttl -= dt;
+  explosions = explosions.filter(e => e.ttl > 0);
+}
+
+function killPlayer() {
+  if (state !== "play") return;
+  state = "dead"; timer = 1.5;
+  explosions.push({ x: player.x + player.w / 2, y: player.y + player.h / 2, ttl: 0.5 });
+  beep(80, 0.4);
+}
+
+function runCollisions() {
+  for (const m of missiles) {
+    for (const e of enemies) {
+      if (!e.dead && aabb(m, e)) {
+        e.dead = true; m.dead = true;
+        score += e.points * (e.state === "diving" ? 2 : 1);
+        explosions.push({ x: e.x + e.w / 2, y: e.y + e.h / 2, ttl: 0.4 });
+        beep(150, 0.07);
+      }
+    }
+  }
+  enemies = enemies.filter(e => !e.dead);
+  for (const b of bullets) {
+    if (aabb(b, player)) { b.dead = true; killPlayer(); }
+  }
+  for (const e of enemies) {
+    if (e.state === "diving" && aabb(e, player)) killPlayer();
+  }
+}
+
+function update(dt) {
+  if (score > hiScore) hiScore = score;
+  if (state === "play") {
+    updatePlayer(dt);
+    updateMissiles(dt);
+    updateBullets(dt);
+    updateEnemies(dt);
+    updateExplosions(dt);
+    runCollisions();
+    diveTimer -= dt;
+    if (diveTimer <= 0) {
+      selectDivers();
+      diveTimer = Math.max(1.4, 3.0 - 0.25 * (stage - 1));
+    }
+    if (!enemies.length) { state = "stageup"; timer = 2; beep(300, 0.3); }
+  } else if (state === "dead" || state === "stageup") {
+    updateExplosions(dt);
+    timer -= dt;
+    if (timer <= 0) {
+      if (state === "dead") {
+        lives--;
+        missiles = []; bullets = [];
+        if (lives > 0) state = "play";
+        else state = "gameover";
+      } else {
+        stage++;
+        buildStage();
+        state = "play";
+      }
+    }
+  }
+}
+
+function drawShip() {
+  const p = player;
+  const cx = p.x + p.w / 2;
+  ctx.fillStyle = "#7cf";
+  ctx.beginPath();
+  ctx.moveTo(p.x, p.y + p.h); ctx.lineTo(cx, p.y); ctx.lineTo(p.x + p.w, p.y + p.h);
+  ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(cx - 4, p.y + 8, 8, 8);
+  ctx.fillStyle = "#f7f";
+  ctx.fillRect(p.x - 6, p.y + p.h - 10, 8, 6);
+  ctx.fillRect(p.x + p.w - 2, p.y + p.h - 10, 8, 6);
+  const t = Math.floor(performance.now() / 150) % 2;
+  ctx.fillStyle = t ? "#f80" : "#ff0";
+  ctx.fillRect(cx - 2, p.y + p.h + 2, 4, 6);
+}
+
+function drawEnemy(e) {
+  if (e.state === "entering" && e.delay > 0) return;
+  const anim = Math.floor(performance.now() / 250) % 2;
+  const cx = e.x + e.w / 2;
+  if (e.type === 0) {
+    ctx.fillStyle = "#ff7";
+    ctx.beginPath(); ctx.ellipse(cx, e.y + e.h / 2, e.w / 2 - 4, e.h / 2 - 4, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(cx - 6, e.y + 6, 4, 4); ctx.fillRect(cx + 2, e.y + 6, 4, 4);
+    ctx.fillStyle = "#7cf";
+    ctx.beginPath(); ctx.ellipse(cx - 10 + (anim ? 2 : 0), e.y + 4, 6, 4, 0, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + 10 - (anim ? 2 : 0), e.y + 4, 6, 4, 0, 0, 7); ctx.fill();
+  } else if (e.type === 1) {
+    ctx.fillStyle = "#f7f";
+    ctx.beginPath(); ctx.ellipse(cx - 8, e.y + 8 + (anim ? 2 : 0), 7, 8, 0, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + 8, e.y + 8 - (anim ? 2 : 0), 7, 8, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(cx - 2, e.y + 10, 4, 8);
+  } else {
+    ctx.fillStyle = "#7cf";
+    ctx.beginPath();
+    ctx.moveTo(cx, e.y); ctx.lineTo(e.x + e.w - 2, e.y + e.h / 2);
+    ctx.lineTo(cx, e.y + e.h - 4); ctx.lineTo(e.x + 2, e.y + e.h / 2);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(cx - 5, e.y + 8, 3, 3); ctx.fillRect(cx + 2, e.y + 8, 3, 3);
+  }
+}
+
+function drawMissiles() {
+  ctx.fillStyle = "#4f4";
+  for (const m of missiles) ctx.fillRect(m.x, m.y, m.w, m.h);
+}
+
+function drawBullets() {
+  ctx.fillStyle = "#f7f";
+  for (const b of bullets) ctx.fillRect(b.x, b.y, b.w, b.h);
+}
+
+function drawExplosions() {
+  for (const e of explosions) {
+    const r = Math.max(1, (0.5 - e.ttl) * 40);
+    ctx.strokeStyle = "#ff0"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(e.x, e.y, r, 0, 7); ctx.stroke();
+  }
+}
+
+function drawHUD() {
+  ctx.fillStyle = "#fff"; ctx.font = "16px monospace";
+  ctx.textAlign = "left";
+  ctx.fillText("SCORE " + score, 10, 20);
+  ctx.textAlign = "center";
+  ctx.fillText("STAGE " + stage, W / 2, 20);
+  ctx.fillText("HI " + hiScore, W / 2, 40);
+  ctx.textAlign = "right";
+  ctx.fillText("LIVES " + lives, W - 10, 20);
+}
+
+function overlayText(lines, color, size, dy) {
+  ctx.fillStyle = color; ctx.font = size + "px monospace"; ctx.textAlign = "center";
+  lines.forEach((s, i) => ctx.fillText(s, W / 2, dy + i * (size + 10)));
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  for (const e of enemies) drawEnemy(e);
+  drawMissiles();
+  drawBullets();
+  drawShip();
+  drawExplosions();
+  drawHUD();
+
+  if (state === "menu") {
+    ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(0, 0, W, H);
+    overlayText(["GALAGA"], "#7cf", 48, 200);
+    overlayText(["HTML5 CLONE"], "#f7f", 20, 260);
+    overlayText(["Shoot the aliens as they fly in and dive!", "Press ENTER to start"], "#fff", 16, 340);
+  }
+  if (state === "dead") overlayText(["OUCH!"], "#f7f", 32, 300);
+  if (state === "stageup") overlayText(["STAGE " + stage + " CLEARED!"], "#7cf", 28, 300);
+  if (state === "gameover") {
+    ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(0, 0, W, H);
+    overlayText(["GAME OVER", "Press ENTER"], "#f7f", 32, 300);
+  }
+}
+
+addEventListener("keydown", e => {
+  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Space"].includes(e.code))
+    e.preventDefault();
+  keys[e.code] = true;
+  if (e.code === "Enter") {
+    if (state === "menu") {
+      score = 0; lives = 3; stage = 1;
+      buildStage();
+      state = "play";
+    } else if (state === "gameover") state = "menu";
+  }
+});
+addEventListener("keyup", e => keys[e.code] = false);
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+buildStage();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
