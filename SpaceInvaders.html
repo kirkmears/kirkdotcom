@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Space Invaders HTML5 Clone</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; height: 100%; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { background: #000; display: block; }
+  .wrap { text-align: center; }
+  p { color: #888; font: 12px monospace; margin: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="game" width="800" height="600"></canvas>
+  <p>&larr; &rarr; move &middot; SPACE fire &middot; ENTER start</p>
+</div>
+
+<script>
+"use strict";
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = 800, H = 600;
+
+// ---------- constants (speeds in px/second) ----------
+const PLAYER_SPEED = 260;
+const SHOT_SPEED = 550;
+const ALIEN_BASE_SPEED = 30;
+const ALIEN_LEVEL_SPEED = 5;      // added base speed per level
+const ALIEN_ACCEL = 0.9;          // added speed per alien killed
+const ALIEN_DROP = 18;
+const BULLET_SPEED = 320;
+const UFO_SPEED = 150;
+
+const ALIEN_W = 26, ALIEN_H = 18;
+const COL_SX = 34, ROW_SY = 26;
+const ALIEN_COLS = 11, ALIEN_ROWS = 5;
+
+// ---------- state ----------
+let state = "menu";                 // menu | play | dead | levelup | gameover
+let score = 0, hiScore = 0, lives = 3, level = 1;
+let player = { x: W / 2 - 20, y: 560, w: 40, h: 20 };
+let shot = { x: 0, y: 0, w: 3, h: 12, active: false };
+let aliens = [], bullets = [], shields = [], explosions = [];
+let alienDir = 1, alienSpeed = ALIEN_BASE_SPEED;
+let ufo = { x: 0, y: 40, w: 48, h: 20, dir: 1, active: false };
+let spawnTimer = 1.2, ufoTimer = 8, timer = 0;
+const keys = {};
+
+// ---------- audio ----------
+let audio = null;
+function beep(freq, dur = 0.12) {
+  try {
+    if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.connect(g); g.connect(audio.destination);
+    o.frequency.value = freq; g.gain.value = 0.08;
+    o.start(); o.stop(audio.currentTime + dur);
+  } catch (e) {}
+}
+
+// ---------- collision (AABB overlap) ----------
+function aabb(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x &&
+         a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+// ---------- setup ----------
+function initAliens() {
+  aliens = [];
+  const startX = 60;
+  const startY = 90 + Math.min(60, (level - 1) * 10);   // starts lower each level
+  for (let r = 0; r < ALIEN_ROWS; r++) {
+    for (let c = 0; c < ALIEN_COLS; c++) {
+      const type = r === 0 ? 2 : (r <= 2 ? 1 : 0);
+      aliens.push({
+        x: startX + c * COL_SX,
+        y: startY + r * ROW_SY,
+        w: ALIEN_W, h: ALIEN_H,
+        type: type,
+        points: type === 2 ? 30 : type === 1 ? 20 : 10,
+        alive: true
+      });
+    }
+  }
+}
+
+function initShields() {
+  shields = [];
+  const sx = [80, 250, 420, 590];
+  const sy = 470;
+  for (const x of sx) {
+    const cells = [];
+    for (let r = 0; r < 12; r++)
+      for (let c = 0; c < 18; c++)
+        cells.push({ x: x + c * 4, y: sy + r * 4, w: 4, h: 4, alive: true });
+    shields.push({ x: x, y: sy, cells: cells });
+  }
+}
+
+function spawnAlienBullet() {
+  const alive = aliens.filter(a => a.alive);
+  if (!alive.length || bullets.length >= 3) return;
+  const a = alive[Math.floor(Math.random() * alive.length)];
+  bullets.push({ x: a.x + a.w / 2 - 1.5, y: a.y + a.h, w: 3, h: 12 });
+}
+
+function spawnUFO() {
+  ufo.dir = Math.random() < 0.5 ? -1 : 1;
+  ufo.x = ufo.dir === 1 ? -ufo.w : W + ufo.w;
+  ufo.active = true;
+}
+
+function startGame() {
+  score = 0; lives = 3; level = 1;
+  initAliens(); initShields();
+  bullets = []; explosions = [];
+  shot.active = false;
+  spawnTimer = 1.2; ufoTimer = 8;
+  state = "play";
+}
+
+// ---------- update (delta-time, seconds) ----------
+function updatePlayer(dt) {
+  let dir = 0;
+  if (keys["ArrowLeft"]) dir = -1;
+  if (keys["ArrowRight"]) dir = 1;
+  player.x += dir * PLAYER_SPEED * dt;
+  if (player.x < 0) player.x = 0;
+  if (player.x + player.w > W) player.x = W - player.w;
+  if (keys["Space"] && !shot.active) {
+    shot.active = true;
+    shot.x = player.x + player.w / 2 - 1.5;
+    shot.y = player.y - shot.h;
+    beep(600, 0.06);
+  }
+}
+
+function updateShot(dt) {
+  if (!shot.active) return;
+  shot.y -= SHOT_SPEED * dt;
+  if (shot.y + shot.h < 0) shot.active = false;
+}
+
+function updateAliens(dt) {
+  const alive = aliens.filter(a => a.alive);
+  const killed = aliens.length - alive.length;
+  alienSpeed = ALIEN_BASE_SPEED + (level - 1) * ALIEN_LEVEL_SPEED + killed * ALIEN_ACCEL;
+
+  // formation march
+  for (const a of alive) a.x += alienDir * alienSpeed * dt;
+
+  // edge reached: drop a row and reverse direction
+  for (const a of alive) {
+    if (a.x < 8 || a.x + a.w > W - 8) {
+      for (const b of alive) b.y += ALIEN_DROP;
+      alienDir = -alienDir;
+      break;
+    }
+  }
+
+  // invasion: aliens reached the player's line
+  for (const a of alive) {
+    if (a.y + a.h >= player.y) { state = "gameover"; return; }
+  }
+
+  // level cleared
+  if (alive.length === 0) { state = "levelup"; timer = 2; beep(300, 0.3); }
+}
+
+function updateAlienBullets(dt) {
+  const speed = BULLET_SPEED * (1 + (level - 1) * 0.15);
+  for (const b of bullets) b.y += speed * dt;
+  bullets = bullets.filter(b => b.y < H + 20 && !b.dead);
+}
+
+function updateUFO(dt) {
+  if (!ufo.active) return;
+  ufo.x += ufo.dir * UFO_SPEED * dt;
+  if (ufo.x < -ufo.w || ufo.x > W + ufo.w) ufo.active = false;
+}
+
+function updateExplosions(dt) {
+  for (const e of explosions) e.ttl -= dt;
+  explosions = explosions.filter(e => e.ttl > 0);
+}
+
+function killPlayer() {
+  if (state !== "play") return;
+  state = "dead"; timer = 1.5;
+  explosions.push({ x: player.x + player.w / 2, y: player.y + player.h / 2, ttl: 0.5 });
+  beep(80, 0.4);
+}
+
+function runCollisions() {
+  // player shot vs aliens
+  if (shot.active) {
+    for (const a of aliens) {
+      if (a.alive && aabb(shot, a)) {
+        a.alive = false;
+        score += a.points;
+        explosions.push({ x: a.x + a.w / 2, y: a.y + a.h / 2, ttl: 0.4 });
+        shot.active = false;
+        beep(200, 0.08);
+        break;
+      }
+    }
+    // player shot vs UFO (mystery bonus)
+    if (shot.active && ufo.active && aabb(shot, ufo)) {
+      ufo.active = false;
+      score += [50, 100, 150, 200, 300][Math.floor(Math.random() * 5)];
+      explosions.push({ x: ufo.x + ufo.w / 2, y: ufo.y + ufo.h / 2, ttl: 0.4 });
+      shot.active = false;
+    }
+    // player shot vs shields (barriers degrade from below too)
+    if (shot.active) {
+      for (const s of shields) {
+        let hit = false;
+        for (const c of s.cells) {
+          if (c.alive && aabb(shot, c)) { c.alive = false; hit = true; }
+        }
+        if (hit) shot.active = false;
+      }
+    }
+  }
+
+  // alien bullets vs shields and player
+  for (const b of bullets) {
+    for (const s of shields) {
+      let hit = false;
+      for (const c of s.cells) {
+        if (c.alive && aabb(b, c)) { c.alive = false; hit = true; }
+      }
+      if (hit) b.dead = true;
+    }
+    if (!b.dead && aabb(b, player)) {
+      b.dead = true;
+      killPlayer();
+    }
+  }
+}
+
+function update(dt) {
+  if (score > hiScore) hiScore = score;
+
+  if (state === "play") {
+    updatePlayer(dt);
+    updateShot(dt);
+    updateAliens(dt);
+    updateAlienBullets(dt);
+    updateUFO(dt);
+    updateExplosions(dt);
+    runCollisions();
+
+    spawnTimer -= dt;
+    if (spawnTimer <= 0) {
+      spawnAlienBullet();
+      spawnTimer = Math.max(0.3, 1.2 - 0.1 * (level - 1));
+    }
+    ufoTimer -= dt;
+    if (ufoTimer <= 0) {
+      spawnUFO();
+      ufoTimer = 12 + Math.random() * 8;
+    }
+  } else if (state === "dead" || state === "levelup") {
+    updateExplosions(dt);
+    timer -= dt;
+    if (timer <= 0) {
+      if (state === "dead") {
+        lives--;
+        if (lives > 0) state = "play";
+        else state = "gameover";
+      } else {
+        level++;
+        initAliens();       // shields persist (classic behavior)
+        bullets = [];
+        shot.active = false;
+        state = "play";
+      }
+    }
+  }
+}
+
+// ---------- drawing (clean vector shapes) ----------
+function drawPlayer() {
+  const p = player;
+  ctx.fillStyle = "#4f4";
+  ctx.fillRect(p.x, p.y + 8, p.w, p.h - 8);                       // base
+  ctx.fillRect(p.x + p.w / 2 - 4, p.y, 8, 12);                    // turret
+}
+
+function drawAlien(a) {
+  const anim = Math.floor(performance.now() / 300) % 2;
+  if (a.type === 2) {                                             // top row "octopus"
+    ctx.fillStyle = "#7cf";
+    ctx.beginPath(); ctx.ellipse(a.x + 13, a.y + 8, 11, 9, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(a.x + 7 + (anim ? 2 : 0), a.y + 6, 3, 3);
+    ctx.fillRect(a.x + 16 - (anim ? 2 : 0), a.y + 6, 3, 3);
+    ctx.fillStyle = "#7cf";
+    for (let i = 0; i < 4; i++)
+      ctx.fillRect(a.x + 3 + i * 5 + (anim ? 1 : 0), a.y + 15, 3, 3);
+  } else if (a.type === 1) {                                      // middle rows "jellyfish"
+    ctx.fillStyle = "#f7f";
+    ctx.beginPath(); ctx.arc(a.x + 13, a.y + 12, 10, Math.PI, 2 * Math.PI); ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(a.x + 8, a.y + 8, 3, 3); ctx.fillRect(a.x + 16, a.y + 8, 3, 3);
+    ctx.fillStyle = "#f7f";
+    for (let i = 0; i < 3; i++)
+      ctx.fillRect(a.x + 4 + i * 7 + (anim ? 1 : -1), a.y + 14, 3, 4);
+  } else {                                                        // bottom rows "crab"
+    ctx.fillStyle = "#7f7";
+    ctx.fillRect(a.x + 4, a.y + 5, 18, 10);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(a.x + 7, a.y + 2, 3, 4); ctx.fillRect(a.x + 16, a.y + 2, 3, 4);
+    ctx.fillStyle = "#7f7";
+    ctx.fillRect(a.x + 2 + (anim ? 1 : 0), a.y + 15, 4, 3);
+    ctx.fillRect(a.x + 20 - (anim ? 1 : 0), a.y + 15, 4, 3);
+  }
+}
+
+function drawShot() {
+  if (!shot.active) return;
+  ctx.fillStyle = "#4f4";
+  ctx.fillRect(shot.x, shot.y, shot.w, shot.h);
+}
+
+function drawBullets() {
+  ctx.fillStyle = "#fff";
+  for (const b of bullets) ctx.fillRect(b.x, b.y, b.w, b.h);
+}
+
+function drawShields() {
+  ctx.fillStyle = "#4f4";
+  for (const s of shields)
+    for (const c of s.cells)
+      if (c.alive) ctx.fillRect(c.x, c.y, c.w, c.h);
+}
+
+function drawUFO() {
+  if (!ufo.active) return;
+  ctx.fillStyle = "#f7f";
+  ctx.beginPath();
+  ctx.ellipse(ufo.x + ufo.w / 2, ufo.y + ufo.h / 2, ufo.w / 2, ufo.h / 2 - 2, 0, 0, 7);
+  ctx.fill();
+  ctx.fillStyle = "#7cf";
+  ctx.beginPath(); ctx.arc(ufo.x + ufo.w / 2, ufo.y + 4, 8, Math.PI, 2 * Math.PI); ctx.fill();
+  const t = Math.floor(performance.now() / 150) % 2;
+  ctx.fillStyle = t ? "#f7f" : "#ff0";
+  ctx.fillRect(ufo.x + ufo.w / 2 - 2, ufo.y + ufo.h - 4, 4, 4);
+}
+
+function drawExplosions() {
+  for (const e of explosions) {
+    const r = Math.max(1, (0.5 - e.ttl) * 40);
+    ctx.strokeStyle = "#ff0"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(e.x, e.y, r, 0, 7); ctx.stroke();
+  }
+}
+
+function drawHUD() {
+  ctx.fillStyle = "#fff"; ctx.font = "16px monospace";
+  ctx.textAlign = "left";
+  ctx.fillText("SCORE " + score, 10, 20);
+  ctx.textAlign = "center";
+  ctx.fillText("LEVEL " + level, W / 2, 20);
+  ctx.fillText("HI " + hiScore, W / 2, 40);
+  ctx.textAlign = "right";
+  ctx.fillText("LIVES " + lives, W - 10, 20);
+}
+
+function overlayText(lines, color, size, dy) {
+  ctx.fillStyle = color; ctx.font = size + "px monospace"; ctx.textAlign = "center";
+  lines.forEach((s, i) => ctx.fillText(s, W / 2, dy + i * (size + 10)));
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  drawShields();
+  drawUFO();
+  for (const a of aliens) if (a.alive) drawAlien(a);
+  drawBullets();
+  drawShot();
+  drawPlayer();
+  drawExplosions();
+  drawHUD();
+
+  if (state === "menu") {
+    ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(0, 0, W, H);
+    overlayText(["SPACE INVADERS"], "#4f4", 48, 200);
+    overlayText(["HTML5 CLONE"], "#7cf", 20, 260);
+    overlayText(["Destroy the invaders before they reach you!", "Press ENTER to start"], "#fff", 16, 340);
+  }
+  if (state === "dead") overlayText(["OUCH!"], "#f7f", 32, 300);
+  if (state === "levelup") overlayText(["LEVEL " + level + " CLEARED!"], "#4f4", 28, 300);
+  if (state === "gameover") {
+    ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(0, 0, W, H);
+    overlayText(["GAME OVER", "Press ENTER"], "#f7f", 32, 300);
+  }
+}
+
+// ---------- input ----------
+addEventListener("keydown", e => {
+  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Space"].includes(e.code))
+    e.preventDefault();
+  keys[e.code] = true;
+  if (e.code === "Enter") {
+    if (state === "menu") startGame();
+    else if (state === "gameover") state = "menu";
+  }
+});
+addEventListener("keyup", e => keys[e.code] = false);
+
+// ---------- main loop (clamped delta-time: solid + responsive) ----------
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// build scene for the menu background, then start
+initAliens();
+initShields();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Super Mario — HTML5 Clone</title>
+<style>
+  body{margin:0;background:#111;color:#fff;font-family:sans-serif;display:flex;
+       flex-direction:column;align-items:center;padding:16px;}
+  h1{font-size:20px;margin:0 0 10px;}
+  canvas{border:4px solid #000;box-shadow:0 0 20px rgba(0,0,0,.6);}
+  p{margin:10px 0 0;font-size:14px;color:#ccc;}
+</style>
+</head>
+<body>
+<h1>🍄 Super Mario — HTML5 Clone</h1>
+<canvas id="game"></canvas>
+<p>Move: ← → or A/D · Jump: ↑ / Z / Space · Stomp enemies, hit ? blocks, grab the mushroom, reach the flag!</p>
+
+<script>
+// ===================== Setup =====================
+const TILE = 32, MAP_W = 120, MAP_H = 15;
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+canvas.width = 960; canvas.height = MAP_H * TILE; // 480
+
+// ===================== Sound (Web Audio) =====================
+let audioCtx = null;
+function tone(freq, dur = 0.12, type = 'square', vol = 0.2) {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = type; o.frequency.value = freq;
+  g.gain.setValueAtTime(vol, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(); o.stop(audioCtx.currentTime + dur);
+}
+const sfxJump  = () => tone(420, 0.12);
+const sfxCoin  = () => { tone(900, 0.08); tone(1400, 0.14); };
+const sfxStomp = () => tone(180, 0.1);
+const sfxGrow  = () => { tone(500, 0.1); tone(750, 0.14); };
+const sfxDie   = () => tone(280, 0.35, 'sawtooth');
+const sfxBreak = () => tone(220, 0.08);
+const sfxBump  = () => tone(140, 0.08);
+
+// ===================== Level =====================
+// Tiles: '.' empty, 'X' ground, 'B' brick, '?' question, 'U' used, 'P' pipe,
+//        'G' goomba (spawn), 'C' coin, 'F' flagpole
+let map = [], enemies = [], coins = [], mushrooms = [], effects = [], flagTiles = [];
+const MUSH = { x: 15, y: 9 };           // block that produces a mushroom
+const G = MAP_H - 2;                    // top ground row (13)
+
+function setT(x, y, c) { if (x>=0&&x<MAP_W&&y>=0&&y<MAP_H) map[y][x]=c; }
+function fillRect(x, y, w, h, c) { for (let yy=y; yy<y+h; yy++) for (let xx=x; xx<x+w; xx++) setT(xx, yy, c); }
+function pipe(x, h) { for (let y=G-h; y<=G-1; y++) { setT(x,y,'P'); setT(x+1,y,'P'); } }
+
+function buildMap() {
+  map = []; for (let y=0; y<MAP_H; y++) map.push(Array(MAP_W).fill('.'));
+  fillRect(0,G,20,2,'X'); fillRect(23,G,17,2,'X'); fillRect(44,G,24,2,'X');
+  fillRect(72,G,20,2,'X'); fillRect(96,G,24,2,'X');
+  pipe(8,2); pipe(30,3); pipe(50,2); pipe(78,4); pipe(100,2);
+  setT(15,9,'?'); setT(17,9,'B'); setT(19,6,'?'); setT(21,9,'B'); setT(23,9,'B');
+  setT(46,9,'B'); setT(48,9,'?'); setT(50,9,'B');
+  setT(75,8,'B'); setT(76,8,'?'); setT(77,8,'B'); setT(76,5,'B');
+  setT(24,12,'G'); setT(36,12,'G'); setT(52,12,'G'); setT(60,12,'G');
+  setT(80,12,'G'); setT(85,12,'G');
+  setT(33,10,'C'); setT(34,10,'C'); setT(63,10,'C'); setT(64,10,'C'); setT(90,9,'C');
+  for (let y=5; y<=12; y++) setT(118,y,'F');
+}
+
+function scanMap() {
+  enemies = []; coins = []; flagTiles = [];
+  for (let y=0; y<MAP_H; y++) for (let x=0; x<MAP_W; x++) {
+    const t = map[y][x];
+    if (t==='G') { enemies.push({x:x*TILE+2,y:(y+1)*TILE-30,w:28,h:30,vx:-0.8,vy:0,onGround:false,state:'walk'}); map[y][x]='.'; }
+    if (t==='C') { coins.push({x:x*TILE+8,y:y*TILE+4,w:16,h:16,baseY:y*TILE+4,phase:x*0.7}); map[y][x]='.'; }
+    if (t==='F') flagTiles.push({x,y});
+  }
+}
+
+buildMap();
+const originalMap = map.map(r => r.slice());
+scanMap();
+
+function resetLevel() {
+  map = originalMap.map(r => r.slice());
+  scanMap(); mushrooms = []; effects = [];
+}
+
+// ===================== State =====================
+let state = 'start', score = 0, lives = 3, coinCount = 0, time = 200;
+let frame = 0, deadTimer = 0, camX = 0;
+const keys = {}; let jumpEdge = false;
+
+function makePlayer() {
+  return { x:2*TILE+4, y:G*TILE-30, w:24, h:30, vx:0, vy:0, big:false, onGround:false, invuln:0 };
+}
+let player = makePlayer();
+
+// ===================== Collision helpers =====================
+function isSolid(tx, ty) {
+  if (tx<0 || tx>=MAP_W) return true;
+  if (ty<0 || ty>=MAP_H) return false;
+  const t = map[ty][tx];
+  return t==='X'||t==='B'||t==='?'||t==='U'||t==='P';
+}
+function hitsSolid(x,y,w,h) {
+  const x0=Math.floor(x/TILE), x1=Math.floor((x+w-1)/TILE);
+  const y0=Math.floor(y/TILE), y1=Math.floor((y+h-1)/TILE);
+  for (let ty=y0; ty<=y1; ty++) for (let tx=x0; tx<=x1; tx++) if (isSolid(tx,ty)) return true;
+  return false;
+}
+function pointSolid(px,py){ return isSolid(Math.floor(px/TILE), Math.floor(py/TILE)); }
+function overlapBox(a,b){ return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y; }
+
+function moveX(e,d) {
+  if (d===0) return false;
+  e.x += d;
+  if (hitsSolid(e.x,e.y,e.w,e.h)) {
+    if (d>0) { const col=Math.floor((e.x+e.w-1)/TILE); e.x=col*TILE-e.w; }
+    else     { const col=Math.floor(e.x/TILE);         e.x=(col+1)*TILE; }
+    return true;
+  }
+  return false;
+}
+function moveY(e,d,isPlayer) {
+  if (d===0) return false;
+  e.y += d;
+  if (hitsSolid(e.x,e.y,e.w,e.h)) {
+    if (d>0) {
+      const row=Math.floor((e.y+e.h-1)/TILE); e.y=row*TILE-e.h;
+      e.onGround=true; e.vy=0; return true;
+    }
+    const row=Math.floor(e.y/TILE); e.y=(row+1)*TILE; e.vy=0;
+    if (isPlayer) {
+      const cL=Math.floor(e.x/TILE), cR=Math.floor((e.x+e.w-1)/TILE);
+      for (let c=cL; c<=cR; c++) hitBlock(c,row);
+    }
+    return true;
+  }
+  e.onGround=false; return false;
+}
+
+function hitBlock(col,row) {
+  const t = map[row][col];
+  if (t==='?') {
+    map[row][col]='U';
+    if (col===MUSH.x && row===MUSH.y) {
+      mushrooms.push({x:col*TILE+3,y:row*TILE-28,w:26,h:28,vx:1.2,vy:0,onGround:false});
+      sfxGrow();
+    } else {
+      effects.push({type:'coinFly',x:col*TILE+8,y:row*TILE-16,vy:-4,life:35});
+      coinCount++; score+=100; sfxCoin();
+    }
+  } else if (t==='B') {
+    if (player.big) { map[row][col]='.'; score+=20; sfxBreak(); } else sfxBump();
+  }
+}
+
+function die() {
+  lives--; state='dead'; deadTimer=90;
+  player.vy=-8; player.vx=0; sfxDie();
+}
+
+// ===================== Update =====================
+function update() {
+  if (state==='dead') {
+    player.vy += 0.5; player.y += player.vy;
+    if (--deadTimer<=0) {
+      if (lives>0) { player=makePlayer(); time=200; state='play'; } else state='over';
+    }
+    return;
+  }
+  if (state!=='play') return;
+
+  time -= 1/60;
+  if (time<=0) { time=0; die(); return; }
+
+  // input
+  const left = keys['ArrowLeft']||keys['a']||keys['A'];
+  const right = keys['ArrowRight']||keys['d']||keys['D'];
+  player.vx = left?-3.2: right?3.2: 0;
+  const jumpHeld = keys['ArrowUp']||keys['z']||keys['Z']||keys[' '];
+  if (jumpEdge && player.onGround) { player.vy=-11; sfxJump(); }
+  jumpEdge = false;
+
+  // gravity (hold jump to float higher)
+  const g = (jumpHeld && player.vy<0) ? 0.25 : 0.5;
+  player.vy += g; if (player.vy>14) player.vy=14;
+
+  moveX(player, player.vx);
+  moveY(player, player.vy, true);
+  if (player.y > MAP_H*TILE+64) { die(); return; }
+
+  // enemies
+  for (const e of enemies) {
+    if (e.state==='flat') { if (--e.timer<=0) e.state='removed'; continue; }
+    e.vy += 0.5; if (e.vy>14) e.vy=14;
+    if (moveX(e,e.vx)) e.vx = -e.vx;
+    const footX = e.vx>0 ? e.x+e.w+1 : e.x-1, footY = e.y+e.h+1;
+    if (!pointSolid(footX,footY)) e.vx = -e.vx;   // turn at edges
+    moveY(e,e.vy,false);
+    if (e.y > MAP_H*TILE+100) e.state='removed';
+  }
+  enemies = enemies.filter(e => e.state!=='removed');
+
+  // mushrooms
+  for (const m of mushrooms) {
+    m.vy += 0.5; if (m.vy>14) m.vy=14;
+    if (moveX(m,m.vx)) m.vx = -m.vx;
+    const footX = m.vx>0 ? m.x+m.w+1 : m.x-1, footY = m.y+m.h+1;
+    if (!pointSolid(footX,footY)) m.vx = -m.vx;
+    moveY(m,m.vy,false);
+  }
+
+  // coins bob + collect
+  for (const c of coins) {
+    c.y = c.baseY + Math.sin(frame*0.08 + c.phase)*3;
+    if (overlapBox(player,c)) { c.got=true; coinCount++; score+=100; sfxCoin(); }
+  }
+  coins = coins.filter(c => !c.got);
+
+  // flying coin effects
+  for (const e of effects) {
+    if (e.type==='coinFly') { e.y+=e.vy; e.vy+=0.3; if (--e.life<=0) e.dead=true; }
+  }
+  effects = effects.filter(e => !e.dead);
+
+  // stomp / hurt
+  for (const e of enemies) {
+    if (e.state!=='walk' || !overlapBox(player,e)) continue;
+    if (player.vy>0 && (player.y+player.h-e.y)<12) {
+      e.state='flat'; e.timer=25; score+=100; player.vy=-6; sfxStomp();
+    } else if (player.invuln<=0) {
+      if (player.big) { player.big=false; player.h=30; player.y+=30; player.invuln=70; sfxBump(); }
+      else { die(); return; }
+    }
+  }
+  if (player.invuln>0) player.invuln--;
+
+  // mushroom collect
+  for (const m of mushrooms) {
+    if (overlapBox(player,m)) {
+      m.got=true; if (!player.big) { player.big=true; player.h=60; player.y-=30; }
+      sfxGrow();
+    }
+  }
+  mushrooms = mushrooms.filter(m => !m.got && m.y < MAP_H*TILE+200);
+
+  // flag = win
+  for (const f of flagTiles) {
+    if (overlapBox(player,{x:f.x*TILE,y:f.y*TILE,w:TILE,h:TILE})) { state='win'; sfxGrow(); }
+  }
+
+  camX = Math.max(0, Math.min(MAP_W*TILE - canvas.width, player.x + player.w/2 - canvas.width/2));
+}
+
+// ===================== Render =====================
+function render() {
+  ctx.fillStyle = '#5C94FC'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  drawBackground(); drawTiles(); drawFlag(); drawCoins(); drawEffects();
+  drawMushrooms(); drawEnemies(); drawPlayer(); drawHUD();
+  if (state==='start') drawOverlay('SUPER MARIO','Press any key to start');
+  if (state==='over')  drawOverlay('GAME OVER','Press any key to restart');
+  if (state==='win')   drawOverlay('LEVEL CLEARED!','Press any key to restart');
+}
+
+function drawBackground() {
+  ctx.fillStyle='#FFF';
+  for (const c of [{x:150,y:70},{x:900,y:50},{x:1800,y:80},{x:2600,y:60},{x:3300,y:75}]) {
+    const x=c.x-camX, y=c.y;
+    ctx.beginPath(); ctx.ellipse(x,y,40,18,0,0,Math.PI*2); ctx.ellipse(x+25,y+8,30,14,0,0,Math.PI*2); ctx.fill();
+  }
+  ctx.fillStyle='#0A8E2B';
+  for (const h of [{x:400,w:180},{x:1200,w:220},{x:2100,w:180},{x:3000,w:220}]) {
+    const x=h.x-camX, baseY=MAP_H*TILE;
+    ctx.beginPath(); ctx.moveTo(x,baseY); ctx.lineTo(x+h.w/2,baseY-80); ctx.lineTo(x+h.w,baseY);
+    ctx.closePath(); ctx.fill();
+  }
+}
+
+function drawTiles() {
+  const c0 = Math.floor(camX/TILE), c1 = Math.min(MAP_W-1, Math.floor((camX+canvas.width)/TILE));
+  for (let ty=0; ty<MAP_H; ty++) for (let tx=c0; tx<=c1; tx++) {
+    const t = map[ty][tx]; if (t==='.'||t==='F') continue;
+    const x = tx*TILE - camX, y = ty*TILE;
+    if (t==='X') {
+      ctx.fillStyle='#C84C0C'; ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle='#7C3600'; ctx.fillRect(x,y+TILE-4,TILE,4);
+    } else if (t==='B') {
+      ctx.fillStyle='#C84C0C'; ctx.fillRect(x,y,TILE,TILE);
+      ctx.fillStyle='#000';
+      ctx.fillRect(x,y+10,TILE,2); ctx.fillRect(x,y+20,TILE,2);
+      ctx.fillRect(x+8,y,2,10); ctx.fillRect(x+20,y+10,2,10); ctx.fillRect(x+8,y+20,2,10);
+    } else if (t==='?') {
+      ctx.fillStyle='#F8B81C'; ctx.fillRect(x,y,TILE,TILE);
+      ctx.strokeStyle='#000'; ctx.lineWidth=2; ctx.strokeRect(x+1,y+1,TILE-2,TILE-2);
+      ctx.fillStyle='#000'; ctx.font='bold 16px monospace';
+      ctx.fillText('?', x+TILE/2-5, y+TILE/2+6);
+    } else if (t==='U') {
+      ctx.fillStyle='#8C5C2C'; ctx.fillRect(x,y,TILE,TILE);
+      ctx.strokeStyle='#000'; ctx.lineWidth=2; ctx.strokeRect(x+1,y+1,TILE-2,TILE-2);
+    } else if (t==='P') {
+      ctx.fillStyle='#00A82C'; ctx.fillRect(x,y,TILE,TILE);
+      ctx.strokeStyle='#00341A'; ctx.lineWidth=2; ctx.strokeRect(x+1,y+1,TILE-2,TILE-2);
+      if (ty>0 && map[ty-1][tx]!=='P') { ctx.fillStyle='#00E12C'; ctx.fillRect(x,y,TILE,6); }
+    }
+  }
+}
+
+function drawFlag() {
+  if (!flagTiles.length) return;
+  const tx = flagTiles[0].x;
+  const minY = Math.min(...flagTiles.map(f=>f.y)), maxY = Math.max(...flagTiles.map(f=>f.y));
+  const x = tx*TILE - camX + TILE/2;
+  ctx.fillStyle='#9A9A9A'; ctx.fillRect(x-3, minY*TILE, 6, (maxY-minY+1)*TILE);
+  ctx.fillStyle='#F8C01C'; ctx.beginPath(); ctx.arc(x, minY*TILE-6, 6, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle='#00A82C'; ctx.beginPath();
+  ctx.moveTo(x+3,minY*TILE); ctx.lineTo(x+27,minY*TILE+12); ctx.lineTo(x+3,minY*TILE+24);
+  ctx.closePath(); ctx.fill();
+}
+
+function drawCoins() {
+  for (const c of coins) {
+    const x=c.x-camX, y=c.y;
+    ctx.fillStyle='#F8C01C'; ctx.beginPath(); ctx.arc(x+c.w/2,y+c.h/2,c.w/2,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#B86E00'; ctx.fillRect(x+c.w/2-1,y+3,2,c.h-6);
+  }
+}
+
+function drawEffects() {
+  for (const e of effects) {
+    if (e.type==='coinFly') {
+      ctx.fillStyle='#F8C01C'; ctx.beginPath(); ctx.arc(e.x-camX+8,e.y+8,8,0,Math.PI*2); ctx.fill();
+    }
+  }
+}
+
+function drawMushrooms() {
+  for (const m of mushrooms) {
+    const x=m.x-camX, y=m.y;
+    ctx.fillStyle='#E00000'; ctx.beginPath(); ctx.ellipse(x+m.w/2,y+10,m.w/2,10,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#FFF'; ctx.fillRect(x+4,y+4,5,5); ctx.fillRect(x+m.w-9,y+4,5,5);
+    ctx.fillStyle='#FFD3A0'; ctx.fillRect(x+4,y+12,m.w-8,m.h-12);
+  }
+}
+
+function drawEnemies() {
+  for (const e of enemies) {
+    const x=e.x-camX, y=e.y;
+    if (e.state==='flat') { ctx.fillStyle='#8C4A0F'; ctx.fillRect(x,y+e.h-8,e.w,8); continue; }
+    ctx.fillStyle='#8C4A0F';
+    ctx.beginPath(); ctx.ellipse(x+e.w/2,y+e.h/2-2,e.w/2,e.h/2-2,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#5E2E00'; ctx.fillRect(x+2,y+e.h-6,e.w/2-2,6); ctx.fillRect(x+e.w/2,y+e.h-6,e.w/2-2,6);
+    ctx.fillStyle='#FFF'; ctx.fillRect(x+5,y+8,6,6); ctx.fillRect(x+e.w-11,y+8,6,6);
+    ctx.fillStyle='#000'; ctx.fillRect(x+7,y+10,2,2); ctx.fillRect(x+e.w-9,y+10,2,2);
+  }
+}
+
+function drawPlayer() {
+  if (player.invuln>0 && Math.floor(frame/4)%2===0) return; // flash when invulnerable
+  const x=player.x-camX, y=player.y, w=player.w, h=player.h;
+  const hatH = h*0.30, faceH = h*0.25, torsoH = h*0.20;
+  ctx.fillStyle='#E00000'; ctx.fillRect(x+2,y,w-4,hatH);
+  ctx.fillStyle='#FFD3A0'; ctx.fillRect(x+4,y+hatH,w-8,faceH);
+  ctx.fillStyle='#E00000'; ctx.fillRect(x+2,y+hatH+faceH,w-4,torsoH);
+  ctx.fillStyle='#2C6BED'; ctx.fillRect(x+3,y+hatH+faceH+torsoH,w-6,h-(hatH+faceH+torsoH));
+}
+
+function drawHUD() {
+  ctx.font='bold 18px monospace'; ctx.textAlign='left';
+  ctx.strokeStyle='#000'; ctx.lineWidth=3; ctx.fillStyle='#FFF';
+  const items = [['SCORE '+score,16,22],['COINS '+coinCount,16,44],['TIME '+Math.max(0,Math.ceil(time)),canvas.width-140,22]];
+  for (const [t,x,y] of items) { ctx.strokeText(t,x,y); ctx.fillText(t,x,y); }
+}
+
+function drawOverlay(title, sub) {
+  ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.textAlign='center'; ctx.fillStyle='#FFF';
+  ctx.font='bold 42px monospace'; ctx.fillText(title, canvas.width/2, 200);
+  ctx.font='20px monospace'; ctx.fillText(sub, canvas.width/2, 250);
+  ctx.textAlign='left';
+}
+
+// ===================== Input & loop =====================
+addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(e.key)) e.preventDefault();
+  if (e.key==='ArrowUp'||e.key==='z'||e.key==='Z'||e.key===' ') jumpEdge = true;
+  if (state==='start') { state='play'; tone(600,0.1); }
+  if (state==='over'||state==='win') resetGame();
+});
+addEventListener('keyup', e => { keys[e.key] = false; });
+
+function resetGame() {
+  score=0; coinCount=0; lives=3; time=200;
+  resetLevel(); player=makePlayer(); state='play';
+}
+
+function loop() {
+  frame++; update(); render();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>

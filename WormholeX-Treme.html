@@ -1,0 +1,757 @@
+<!-- =======================================================================
+  KIRKADIA ARCADE SHOWROOM
+  ==========================================================================
+  Cabinet:           [Left Wall / Right Wall Slot]
+  Game Title:        Asteroids Clone (1979/1980)
+  Host Environment:  kirkdotcom.azurewebsites.net
+  
+  RUNTIME ARCHITECTURE & ENGINE FLAGS:
+  Binary / Server:   llama-server.exe (llama.cpp build)
+  Model Weights:     Kimi-K3-IQ1_S-00001-of-00094.gguf
+  Context Window:    -c 131073
+  Execution Flags:   --reasoning-preserve --no-mmap
+  
+  CORE SOURCE PROMPT:
+  "Write a complete, single-file HTML5 Canvas side-scrolling action game titled 
+"Wormhole X-Treme!" for my website. Use clean canvas-drawn vector shapes for assets. 
+Do not skip or condense any functions.
+
+Use your deep reasoning tokens to design a custom 80s arcade game loop featuring:
+1. SIDE-SCROLLING ACTION: A horizontal scrolling level viewport where a hero character 
+runs right, jumps over obstacles, and fires horizontal laser beams.
+2. WORMHOLE TELEPORTATION: At the far right end of the level, place a massive spinning, 
+glowing vector circle representing the "Wormhole Portal". Stepping into it resets the 
+player position and changes the level color palette to simulate a new planet stage.
+3. PARODY ENEMY ARRAY: Spawn simple moving alien drones and stationary laser turrets 
+that fire projectiles at the player using basic box collision detection.
+4. HEADS-UP DISPLAY: Include a retro top overlay tracking SCORE, LIVES, and CURRENT STAGE. 
+Keep the entire game loop dense, modular, and fully functional."
+  ========================================================================== -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wormhole X-Treme!</title>
+<style>
+  html,body{margin:0;padding:0;background:#050510;height:100%;overflow:hidden;}
+  body{display:flex;align-items:center;justify-content:center;}
+  canvas{display:block;border:2px solid #222;box-shadow:0 0 40px rgba(120,60,200,0.35);}
+</style>
+</head>
+<body>
+<canvas id="game" width="960" height="540"></canvas>
+<script>
+/* ============================================================
+   WORMHOLE X-TREME! — a single-file 80s arcade side-scroller.
+   All artwork is drawn with clean canvas vector shapes.
+   ============================================================ */
+"use strict";
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+/* -------------------- Constants -------------------- */
+const W = 960;
+const H = 540;
+const FLOOR = H - 84;             // top surface of the ground strip
+const GRAVITY = 0.55;
+const LEVEL_LEN = 2600;           // horizontal length of one stage
+const MAX_CAM = LEVEL_LEN - W;    // camera clamp
+
+/* -------------------- Planet palettes -------------------- */
+const PALETTES = [
+  { name:"ZEPHYR-9",  skyA:"#0b0b2e", skyB:"#2a1440", floor:"#1c5e3f", floorDark:"#0f3522", plat:"#3f7", spike:"#8ef", drone:"#e44", turret:"#f72", portal:"#7df", star:"#fff" },
+  { name:"MAGMA-BAR", skyA:"#1a0500", skyB:"#5a1208", floor:"#5a1e12", floorDark:"#2a0c06", plat:"#f90", spike:"#ff4", drone:"#4ef", turret:"#ff3", portal:"#f4a", star:"#ffd" },
+  { name:"GLACIA-12", skyA:"#03101c", skyB:"#0a3a55", floor:"#2e6e8e", floorDark:"#143f52", plat:"#9df", spike:"#fff", drone:"#f8c", turret:"#6cf", portal:"#aef", star:"#eef" },
+  { name:"TUNDRA-X",  skyA:"#0d0d18", skyB:"#273a4a", floor:"#5a6a3a", floorDark:"#2d3620", plat:"#cd6", spike:"#a8f", drone:"#fc6", turret:"#8df", portal:"#bf8", star:"#fff" },
+  { name:"NEON-VAAL", skyA:"#120818", skyB:"#34124a", floor:"#3a1e5a", floorDark:"#1e0e2e", plat:"#f0f", spike:"#0ff", drone:"#0f8", turret:"#f08", portal:"#f6f", star:"#fdf" }
+];
+
+/* -------------------- Game state -------------------- */
+const game = {
+  state:"title",        // title | playing | gameover
+  stage:1,
+  score:0,
+  lives:3,
+  camX:0,
+  palette:PALETTES[0],
+  time:0,
+  flash:0,              // teleport flash alpha
+  banner:0,             // stage banner timer
+  shake:0               // hurt shake
+};
+
+/* -------------------- Entities -------------------- */
+const player = {
+  x:80, y:FLOOR-44, w:26, h:44,
+  vx:0, vy:0, facing:1,
+  grounded:false,
+  cool:0,               // laser cooldown
+  invuln:0,             // post-hit invulnerability
+  runPhase:0
+};
+
+let enemies = [];       // drones + turrets
+let obstacles = [];     // solid platforms + hazard spikes
+let bullets = [];       // player laser beams
+let ebullets = [];      // enemy projectiles
+let portal = null;
+
+/* -------------------- Utility -------------------- */
+function clamp(v,min,max){ return v<min?min:(v>max?max:v); }
+function rand(min,max){ return min + Math.random()*(max-min); }
+function aabb(a,b){      // basic box collision detection
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+function center(box){ return { x:box.x+box.w/2, y:box.y+box.h/2 }; }
+
+/* -------------------- Input -------------------- */
+const keys = {};
+const pressed = {};
+const GAME_CODES = ["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Space","KeyA","KeyD","KeyW","KeyX","KeyK","KeyJ","Enter"];
+window.addEventListener("keydown", e => {
+  if(GAME_CODES.includes(e.code)) e.preventDefault();
+  if(!keys[e.code]) pressed[e.code] = true;
+  keys[e.code] = true;
+});
+window.addEventListener("keyup", e => { keys[e.code] = false; });
+function anyHeld(...c){ return c.some(k => keys[k]); }
+function anyPressed(...c){ return c.some(k => pressed[k]); }
+
+/* -------------------- Stage construction -------------------- */
+function spawnSpike(x){
+  obstacles.push({ x:x, y:FLOOR-34, w:42, h:34, type:"spike", solid:false });
+}
+function spawnPlatform(x,y,w){
+  obstacles.push({ x:x, y:y, w:w, h:16, type:"platform", solid:true });
+}
+function spawnDrone(x,minX,maxX){
+  enemies.push({ type:"drone", x:x, y:FLOOR-160, w:30, h:26,
+                 baseY:FLOOR-160, minX:minX, maxX:maxX,
+                 vx:(Math.random()<0.5?-1:1)*1.4, phase:rand(0,6.28),
+                 hp:1, score:100 });
+}
+function spawnTurret(x){
+  enemies.push({ type:"turret", x:x, y:FLOOR-46, w:34, h:46,
+                 cooldown:rand(40,140), aim:0, hp:2, score:150 });
+}
+function buildStage(){
+  enemies = []; obstacles = []; bullets = []; ebullets = [];
+  const stage = game.stage;
+
+  /* hazard spikes sprinkled across the level */
+  let sx = 450;
+  while(sx < LEVEL_LEN - 320){
+    spawnSpike(sx);
+    sx += rand(280,420);
+  }
+
+  /* floating platforms to jump onto */
+  let px = 620;
+  while(px < LEVEL_LEN - 320){
+    spawnPlatform(px, FLOOR - 120, 120);
+    px += rand(420,600);
+  }
+
+  /* alien drones */
+  const droneCount = Math.min(4 + stage, 10);
+  for(let i=0;i<droneCount;i++){
+    const bx = rand(500, LEVEL_LEN-400);
+    spawnDrone(bx, bx-140, bx+140);
+  }
+
+  /* laser turrets */
+  const turretCount = Math.min(2 + Math.floor(stage/2), 6);
+  for(let i=0;i<turretCount;i++){
+    spawnTurret(rand(700, LEVEL_LEN-300));
+  }
+
+  /* the massive wormhole portal at the far right */
+  portal = { x:LEVEL_LEN-170, y:FLOOR-95, r:72, spin:0 };
+}
+function resetPlayer(){
+  player.x = 90; player.y = FLOOR - player.h;
+  player.vx = 0; player.vy = 0; player.facing = 1;
+  player.grounded = true; player.invuln = 0; player.cool = 0;
+  game.camX = 0;
+}
+function startGame(){
+  game.state = "playing";
+  game.stage = 1; game.score = 0; game.lives = 3;
+  game.palette = PALETTES[0];
+  game.flash = 0; game.banner = 180;
+  buildStage(); resetPlayer();
+}
+
+/* -------------------- Player update -------------------- */
+function updatePlayer(){
+  const p = player;
+  const accel = 0.55, maxV = 3.8;
+
+  if(anyHeld("ArrowRight","KeyD")){ p.vx += accel; p.facing = 1; }
+  if(anyHeld("ArrowLeft","KeyA")){ p.vx -= accel; p.facing = -1; }
+  p.vx = clamp(p.vx, -maxV, maxV) * 0.88;   // friction
+  p.runPhase += Math.abs(p.vx) * 0.12;
+
+  /* jump */
+  if(p.grounded && anyPressed("Space","ArrowUp","KeyW")){
+    p.vy = -10.8; p.grounded = false;
+  }
+
+  /* gravity + integrate */
+  p.vy += GRAVITY;
+  p.x += p.vx; p.y += p.vy;
+
+  /* floor landing */
+  p.grounded = false;
+  if(p.y + p.h >= FLOOR){ p.y = FLOOR - p.h; p.vy = 0; p.grounded = true; }
+
+  /* solid floating platforms */
+  for(const o of obstacles){
+    if(o.solid){
+      const box = {x:p.x,y:p.y,w:p.w,h:p.h};
+      const obox = {x:o.x,y:o.y,w:o.w,h:o.h};
+      if(aabb(box,obox)){
+        if(p.vy >= 0 && p.y + p.h - o.y < 12){   // falling onto top
+          p.y = o.y - p.h; p.vy = 0; p.grounded = true;
+        } else if(p.vy < 0){                      // bump head underneath
+          p.y = o.y + o.h + 0.1; p.vy = 0;
+        } else {                                  // side hit: push out
+          if(p.x + p.w/2 < o.x + o.w/2) p.x = o.x - p.w;
+          else p.x = o.x + o.w;
+        }
+      }
+    }
+  }
+
+  /* hazard spikes hurt */
+  for(const o of obstacles){
+    if(o.type === "spike" && aabb({x:p.x,y:p.y,w:p.w,h:p.h}, {x:o.x+6,y:o.y+6,w:o.w-12,h:o.h-6})){
+      hurtPlayer();
+    }
+  }
+
+  /* horizontal laser beam */
+  if(p.cool > 0) p.cool--;
+  if(anyPressed("KeyX","KeyK","KeyJ") && p.cool <= 0){
+    bullets.push({ x:p.x + p.w/2 + p.facing*18, y:p.y + p.h*0.42,
+                   w:26, h:5, vx:p.facing*11, life:60 });
+    p.cool = 16;
+  }
+
+  /* bounds */
+  p.x = clamp(p.x, 0, LEVEL_LEN - p.w);
+
+  /* invulnerability timer */
+  if(p.invuln > 0) p.invuln--;
+}
+
+/* -------------------- Enemies -------------------- */
+function updateEnemies(){
+  for(const e of enemies){
+    if(e.type === "drone"){
+      e.x += e.vx;
+      if(e.x < e.minX || e.x + e.w > e.maxX){ e.vx *= -1; }
+      e.phase += 0.08;
+      e.y = e.baseY + Math.sin(e.phase) * 16;
+    }
+    if(e.type === "turret"){
+      /* aim at the player and fire projectiles every so often */
+      const p = center(player);
+      const t = center(e);
+      e.aim = Math.atan2(p.y - t.y, p.x - t.x);
+      e.cooldown--;
+      if(e.cooldown <= 0){
+        e.cooldown = rand(90,160);
+        const sp = 3.2 + game.stage*0.15;
+        ebullets.push({ x:t.x + Math.cos(e.aim)*20, y:t.y + Math.sin(e.aim)*20,
+                        w:8, h:8, vx:Math.cos(e.aim)*sp, vy:Math.sin(e.aim)*sp, life:200 });
+      }
+    }
+  }
+}
+
+/* -------------------- Projectiles -------------------- */
+function updateBullets(){
+  for(let i=bullets.length-1;i>=0;i--){
+    const b = bullets[i];
+    b.x += b.vx; b.life--;
+    let dead = b.life <= 0;
+    /* laser vs enemy */
+    for(let j=enemies.length-1;j>=0;j--){
+      const e = enemies[j];
+      if(aabb(b,e)){
+        e.hp--;
+        dead = true;
+        if(e.hp <= 0){
+          game.score += e.score;
+          enemies.splice(j,1);
+        }
+      }
+    }
+    if(dead) bullets.splice(i,1);
+  }
+}
+function updateEnemyBullets(){
+  const pBox = {x:player.x,y:player.y,w:player.w,h:player.h};
+  for(let i=ebullets.length-1;i>=0;i--){
+    const b = ebullets[i];
+    b.x += b.vx; b.y += b.vy; b.life--;
+    if(aabb(b,pBox)){ hurtPlayer(); b.life = 0; }
+    if(b.life <= 0 || b.x < 0 || b.x > LEVEL_LEN) ebullets.splice(i,1);
+  }
+}
+
+/* -------------------- Hurt + drone touch -------------------- */
+function hurtPlayer(){
+  if(player.invuln > 0 || game.state !== "playing") return;
+  game.lives--;
+  player.invuln = 120;
+  player.vy = -6.5;
+  game.shake = 12;
+  if(game.lives <= 0){ game.state = "gameover"; }
+}
+function checkEnemyTouch(){
+  const pBox = {x:player.x,y:player.y,w:player.w,h:player.h};
+  for(const e of enemies){
+    if(e.type === "drone" && aabb(pBox,e)) hurtPlayer();
+  }
+}
+
+/* -------------------- Wormhole teleportation -------------------- */
+function updatePortal(){
+  portal.spin += 0.06;
+  const pBox = {x:player.x,y:player.y,w:player.w,h:player.h};
+  const portBox = { x:portal.x - portal.r, y:portal.y - portal.r,
+                    w:portal.r*2, h:portal.r*2 };
+  if(aabb(pBox, portBox)){
+    /* step into the wormhole: new planet stage! */
+    game.stage++;
+    game.score += 500;
+    game.palette = PALETTES[(game.stage-1) % PALETTES.length];
+    game.flash = 1.0;
+    game.banner = 180;
+    buildStage();
+    resetPlayer();
+  }
+}
+
+/* -------------------- Camera -------------------- */
+function updateCamera(){
+  const target = clamp(player.x - W*0.42, 0, MAX_CAM);
+  game.camX += (target - game.camX) * 0.12;
+  if(game.shake > 0) game.shake--;
+}
+
+/* -------------------- Main update -------------------- */
+function updateGame(){
+  if(game.state !== "playing") return;
+  game.time++;
+  updatePlayer();
+  updateEnemies();
+  updateBullets();
+  updateEnemyBullets();
+  checkEnemyTouch();
+  updatePortal();
+  updateCamera();
+  if(game.flash > 0) game.flash -= 0.04;
+  if(game.banner > 0) game.banner--;
+  /* clear one-frame key flags */
+  for(const k in pressed) pressed[k] = false;
+}
+
+/* -------------------- Drawing: sky + parallax -------------------- */
+function drawSky(){
+  const pal = game.palette;
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,pal.skyA); g.addColorStop(1,pal.skyB);
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+}
+function drawStars(){
+  ctx.fillStyle = game.palette.star;
+  for(let i=0;i<90;i++){
+    const base = (i*97 + i*13) % (W+120);
+    let sx = base - (game.camX*0.18) % (W+120);
+    if(sx < -60) sx += W+120;
+    const sy = (i*53) % (FLOOR-140) + 8;
+    ctx.fillRect(sx, sy, 2, 2);
+  }
+}
+function drawMountains(){
+  const pal = game.palette;
+  /* far layer */
+  ctx.fillStyle = pal.floorDark;
+  ctx.beginPath();
+  let x = -game.camX*0.35;
+  ctx.moveTo(x, FLOOR);
+  for(let i=0;i<8;i++){
+    const mx = x + i*160;
+    ctx.lineTo(mx + 60, FLOOR - 90 - ((i%3)*30));
+    ctx.lineTo(mx + 120, FLOOR);
+  }
+  ctx.lineTo(x + 8*160, FLOOR); ctx.lineTo(x, FLOOR);
+  ctx.fill();
+  /* near layer */
+  ctx.fillStyle = pal.floor;
+  ctx.beginPath();
+  x = -game.camX*0.55;
+  ctx.moveTo(x, FLOOR+30);
+  for(let i=0;i<10;i++){
+    const mx = x + i*120;
+    ctx.lineTo(mx + 40, FLOOR - 40 - ((i%4)*20));
+    ctx.lineTo(mx + 80, FLOOR+30);
+  }
+  ctx.lineTo(x + 10*120, FLOOR+30); ctx.lineTo(x, FLOOR+30);
+  ctx.fill();
+}
+function drawFloor(){
+  const pal = game.palette;
+  ctx.fillStyle = pal.floor;
+  ctx.fillRect(0,FLOOR,W,H-FLOOR);
+  ctx.fillStyle = pal.floorDark;
+  ctx.fillRect(0,FLOOR+18,W,H-FLOOR-18);
+  /* neon top edge */
+  ctx.fillStyle = pal.plat;
+  ctx.fillRect(0,FLOOR,W,3);
+  /* vector tile seams */
+  ctx.strokeStyle = "rgba(0,0,0,0.25)";
+  ctx.lineWidth = 1;
+  for(let x = -(game.camX % 80); x < W; x += 80){
+    ctx.beginPath(); ctx.moveTo(x,FLOOR); ctx.lineTo(x,H); ctx.stroke();
+  }
+}
+
+/* -------------------- Drawing: obstacles -------------------- */
+function drawObstacles(){
+  for(const o of obstacles){
+    const x = o.x - game.camX;
+    if(x + o.w < -40 || x > W+40) continue;
+    if(o.type === "spike"){
+      /* glowing crystal spike */
+      ctx.fillStyle = game.palette.spike;
+      ctx.beginPath();
+      ctx.moveTo(x, o.y + o.h);
+      ctx.lineTo(x + o.w/2, o.y);
+      ctx.lineTo(x + o.w, o.y + o.h);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = "rgba(255,255,255,0.6)";
+      ctx.beginPath(); ctx.moveTo(x+o.w/2,o.y+4); ctx.lineTo(x+o.w/2,o.y+o.h); ctx.stroke();
+    }
+    if(o.type === "platform"){
+      ctx.fillStyle = game.palette.floorDark;
+      ctx.fillRect(x, o.y, o.w, o.h);
+      ctx.fillStyle = game.palette.plat;
+      ctx.fillRect(x, o.y, o.w, 3);
+      /* rivets */
+      ctx.fillStyle = "rgba(255,255,255,0.5)";
+      for(let r=12; r<o.w; r+=24) ctx.fillRect(x+r, o.y+6, 3, 3);
+    }
+  }
+}
+
+/* -------------------- Drawing: portal -------------------- */
+function drawPortal(){
+  const p = portal;
+  const x = p.x - game.camX;
+  const y = p.y;
+  /* outer glow */
+  const glow = ctx.createRadialGradient(x,y,p.r*0.3,x,y,p.r*1.6);
+  glow.addColorStop(0, game.palette.portal);
+  glow.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.globalAlpha = 0.35 + 0.15*Math.sin(game.time*0.1);
+  ctx.fillStyle = glow;
+  ctx.beginPath(); ctx.arc(x,y,p.r*1.6,0,6.28); ctx.fill();
+  ctx.globalAlpha = 1;
+
+  /* spinning concentric vector rings */
+  for(let i=0;i<4;i++){
+    const rr = p.r - i*14;
+    ctx.strokeStyle = game.palette.portal;
+    ctx.lineWidth = 3 - i*0.5;
+    ctx.globalAlpha = 0.9 - i*0.18;
+    ctx.beginPath();
+    const start = p.spin + i*1.3;
+    ctx.arc(x,y,rr,start,start + 4.2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  /* swirling core particles */
+  ctx.fillStyle = "#fff";
+  ctx.beginPath();
+  for(let i=0;i<3;i++){
+    const a = p.spin*1.7 + i*2.1;
+    const cx = x + Math.cos(a)*10, cy = y + Math.sin(a)*10;
+    ctx.moveTo(cx,cy);
+    ctx.arc(cx,cy,4+i,0,6.28);
+  }
+  ctx.fill();
+
+  /* label */
+  ctx.fillStyle = game.palette.portal;
+  ctx.font = "bold 13px monospace";
+  ctx.textAlign = "center";
+  ctx.fillText("WORMHOLE", x, y - p.r - 12);
+  ctx.textAlign = "left";
+}
+
+/* -------------------- Drawing: enemies -------------------- */
+function drawDrone(e){
+  const x = e.x - game.camX, y = e.y;
+  /* saucer body */
+  ctx.fillStyle = game.palette.drone;
+  ctx.beginPath(); ctx.arc(x+e.w/2,y+e.h/2,e.w/2,0,6.28); ctx.fill();
+  /* dome */
+  ctx.fillStyle = "rgba(255,255,255,0.35)";
+  ctx.beginPath(); ctx.arc(x+e.w/2,y+e.h/2-6,e.w/4,0,6.28); ctx.fill();
+  /* eye */
+  ctx.fillStyle = "#fff";
+  ctx.beginPath(); ctx.arc(x+e.w/2,y+e.h/2,3,0,6.28); ctx.fill();
+  /* antenna */
+  ctx.strokeStyle = game.palette.drone; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(x+e.w/2,y); ctx.lineTo(x+e.w/2,y-8); ctx.stroke();
+  ctx.fillStyle = "#fff";
+  ctx.beginPath(); ctx.arc(x+e.w/2,y-10,2,0,6.28); ctx.fill();
+  /* spinning ring */
+  ctx.strokeStyle = "rgba(255,255,255,0.5)";
+  ctx.beginPath(); ctx.arc(x+e.w/2,y+e.h/2,e.w/2+4,e.phase,e.phase+1.2); ctx.stroke();
+}
+function drawTurret(e){
+  const x = e.x - game.camX, y = e.y;
+  /* base box */
+  ctx.fillStyle = game.palette.turret;
+  ctx.fillRect(x,y+18,e.w,e.h-18);
+  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  ctx.fillRect(x+3,y+22,e.w-6,e.h-26);
+  /* rotating barrel toward aim */
+  const cx = x+e.w/2, cy = y+18;
+  ctx.save();
+  ctx.translate(cx,cy); ctx.rotate(e.aim);
+  ctx.fillStyle = game.palette.turret;
+  ctx.fillRect(0,-3,26,6);
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(22,-3,4,6);
+  ctx.restore();
+  /* warning light */
+  ctx.fillStyle = (e.cooldown < 30) ? "#ff0" : "#f60";
+  ctx.beginPath(); ctx.arc(cx,cy-8,3,0,6.28); ctx.fill();
+}
+function drawEnemies(){
+  for(const e of enemies){
+    const x = e.x - game.camX;
+    if(x + e.w < -60 || x > W+60) continue;
+    if(e.type === "drone") drawDrone(e);
+    if(e.type === "turret") drawTurret(e);
+  }
+}
+
+/* -------------------- Drawing: player -------------------- */
+function drawPlayer(){
+  const p = player;
+  const x = p.x - game.camX, y = p.y;
+  /* flicker when invulnerable */
+  if(p.invuln > 0 && ((game.time/4|0)%2===0)) return;
+  ctx.save();
+  ctx.translate(x + p.w/2, y);
+  ctx.scale(p.facing,1);
+  /* legs (run cycle) */
+  const lp = Math.sin(p.runPhase) * 6;
+  ctx.fillStyle = "#c8c8d8";
+  ctx.fillRect(-9, p.h-14, 6, 14 + lp*0.4);
+  ctx.fillRect(3, p.h-14, 6, 14 - lp*0.4);
+  /* suit body */
+  ctx.fillStyle = "#e8e8f8";
+  ctx.fillRect(-11, 10, 22, p.h-24);
+  /* backpack */
+  ctx.fillStyle = "#9a9ab8";
+  ctx.fillRect(-14, 12, 6, 16);
+  /* helmet */
+  ctx.fillStyle = "#e8e8f8";
+  ctx.beginPath(); ctx.arc(0, 6, 9, 0, 6.28); ctx.fill();
+  /* visor */
+  ctx.fillStyle = "#7df";
+  ctx.beginPath(); ctx.arc(3, 6, 5, 0, 6.28); ctx.fill();
+  /* laser blaster */
+  ctx.fillStyle = "#4a4a6a";
+  ctx.fillRect(8, p.h*0.36, 16, 5);
+  ctx.fillStyle = "#ff5";
+  ctx.fillRect(22, p.h*0.36+1, 3, 3);
+  /* chest light */
+  ctx.fillStyle = "#f4a";
+  ctx.fillRect(-2, 18, 4, 4);
+  ctx.restore();
+}
+
+/* -------------------- Drawing: projectiles -------------------- */
+function drawBullets(){
+  for(const b of bullets){
+    const x = b.x - game.camX, y = b.y;
+    /* horizontal laser beam: white core + glow */
+    ctx.fillStyle = "rgba(255,80,80,0.35)";
+    ctx.fillRect(x-2,y-2,b.w+4,b.h+4);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(x,y,b.w,b.h);
+    ctx.fillStyle = "#f44";
+    ctx.fillRect(x + (b.vx>0?b.w-6:0), y+1, 6, b.h-2);
+  }
+}
+function drawEnemyBullets(){
+  for(const b of ebullets){
+    const x = b.x - game.camX, y = b.y;
+    ctx.fillStyle = "rgba(255,180,0,0.4)";
+    ctx.beginPath(); ctx.arc(x+b.w/2,y+b.h/2,b.w,0,6.28); ctx.fill();
+    ctx.fillStyle = "#ff4";
+    ctx.beginPath(); ctx.arc(x+b.w/2,y+b.h/2,b.w/2,0,6.28); ctx.fill();
+  }
+}
+
+/* -------------------- HUD -------------------- */
+function drawHUD(){
+  const pal = game.palette;
+  /* retro top overlay */
+  ctx.fillStyle = "rgba(8,6,18,0.72)";
+  ctx.fillRect(0,0,W,44);
+  ctx.strokeStyle = pal.portal;
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0,44); ctx.lineTo(W,44); ctx.stroke();
+  /* scanlines */
+  ctx.fillStyle = "rgba(255,255,255,0.05)";
+  for(let y=2;y<44;y+=4) ctx.fillRect(0,y,W,1);
+
+  ctx.font = "bold 16px monospace";
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "left";
+
+  /* SCORE */
+  ctx.fillStyle = "#7cf";
+  ctx.fillText("SCORE " + String(game.score).padStart(6,"0"), 16, 22);
+
+  /* STAGE + CURRENT PLANET */
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#fd6";
+  ctx.fillText("STAGE " + game.stage + "  " + game.palette.name, W/2, 22);
+
+  /* LIVES as helmet icons */
+  ctx.textAlign = "right";
+  ctx.fillStyle = "#7cf";
+  ctx.fillText("LIVES", W-120, 22);
+  for(let i=0;i<game.lives;i++){
+    const lx = W - 84 + i*22;
+    ctx.fillStyle = "#e8e8f8";
+    ctx.beginPath(); ctx.arc(lx,22,7,0,6.28); ctx.fill();
+    ctx.fillStyle = "#7df";
+    ctx.beginPath(); ctx.arc(lx+2,22,4,0,6.28); ctx.fill();
+  }
+  ctx.textAlign = "left";
+}
+
+/* -------------------- Banner + flash + shake -------------------- */
+function drawBanner(){
+  if(game.banner <= 0) return;
+  const a = clamp(game.banner/60,0,1);
+  ctx.globalAlpha = a;
+  ctx.font = "bold 30px monospace";
+  ctx.textAlign = "center";
+  ctx.fillStyle = game.palette.portal;
+  ctx.fillText("WELCOME TO " + game.palette.name, W/2, H/2 - 60);
+  ctx.font = "bold 14px monospace";
+  ctx.fillText("STAGE " + game.stage + " — +500 WORMHOLE BONUS", W/2, H/2 - 30);
+  ctx.globalAlpha = 1;
+  ctx.textAlign = "left";
+}
+function drawFlash(){
+  if(game.flash <= 0) return;
+  ctx.fillStyle = "rgba(255,255,255," + (game.flash*0.9) + ")";
+  ctx.fillRect(0,0,W,H);
+}
+function drawShakeOffset(){
+  if(game.shake > 0){
+    return { x:rand(-game.shake,game.shake)*0.5, y:rand(-game.shake,game.shake)*0.5 };
+  }
+  return {x:0,y:0};
+}
+
+/* -------------------- Title / GameOver screens -------------------- */
+function drawTitle(){
+  drawSky(); drawStars();
+  ctx.textAlign = "center";
+  /* glowing logo */
+  ctx.font = "bold 56px monospace";
+  ctx.fillStyle = game.palette.portal;
+  ctx.shadowColor = game.palette.portal; ctx.shadowBlur = 24;
+  ctx.fillText("WORMHOLE", W/2, H/2 - 90);
+  ctx.fillStyle = "#fff";
+  ctx.shadowColor = "#f4a"; ctx.shadowBlur = 18;
+  ctx.fillText("X-TREME!", W/2, H/2 - 30);
+  ctx.shadowBlur = 0;
+  ctx.font = "bold 16px monospace";
+  ctx.fillStyle = "#9df";
+  ctx.fillText("ARROWS/A,D: MOVE   SPACE/W: JUMP   X/K: LASER", W/2, H/2 + 30);
+  ctx.fillText("STEP INTO THE WORMHOLE TO REACH NEW PLANETS", W/2, H/2 + 58);
+  ctx.fillStyle = "#fff";
+  ctx.fillText("PRESS ENTER TO START", W/2, H/2 + 100);
+  ctx.textAlign = "left";
+}
+function drawGameOver(){
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(0,0,W,H);
+  ctx.textAlign = "center";
+  ctx.font = "bold 48px monospace";
+  ctx.fillStyle = "#f44";
+  ctx.fillText("GAME OVER", W/2, H/2 - 40);
+  ctx.font = "bold 18px monospace";
+  ctx.fillStyle = "#7cf";
+  ctx.fillText("FINAL SCORE " + game.score + "   STAGE " + game.stage, W/2, H/2 + 10);
+  ctx.fillStyle = "#fff";
+  ctx.fillText("PRESS ENTER TO RETRY", W/2, H/2 + 60);
+  ctx.textAlign = "left";
+}
+
+/* -------------------- Master draw -------------------- */
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  if(game.state === "title"){ drawTitle(); return; }
+
+  const shake = drawShakeOffset();
+  ctx.save();
+  ctx.translate(shake.x, shake.y);
+
+  drawSky(); drawStars(); drawMountains(); drawFloor();
+  drawObstacles();
+  drawPortal();
+  drawEnemies();
+  drawPlayer();
+  drawBullets(); drawEnemyBullets();
+  ctx.restore();
+
+  drawHUD();
+  drawBanner();
+  drawFlash();
+  if(game.state === "gameover") drawGameOver();
+}
+
+/* -------------------- Main loop -------------------- */
+function loop(){
+  /* handle start/restart keys */
+  if(game.state === "title" && pressed["Enter"]){ startGame(); }
+  if(game.state === "gameover" && pressed["Enter"]){ startGame(); }
+
+  updateGame();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+/* -------------------- Canvas fit -------------------- */
+function fit(){
+  const s = Math.min(window.innerWidth / W, window.innerHeight / H);
+  canvas.style.width = (W*s) + "px";
+  canvas.style.height = (H*s) + "px";
+}
+window.addEventListener("resize", fit);
+fit();
+loop();
+</script>
+</body>
+</html>

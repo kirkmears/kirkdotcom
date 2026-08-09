@@ -1,0 +1,496 @@
+<!-- =======================================================================
+  KIRKADIA ARCADE SHOWROOM
+  ==========================================================================
+  Cabinet:           [Left Wall / Right Wall Slot]
+  Game Title:        Contra Clone (1979/1980)
+  Host Environment:  kirkdotcom.azurewebsites.net
+  
+  RUNTIME ARCHITECTURE & ENGINE FLAGS:
+  Binary / Server:   llama-server.exe (llama.cpp build)
+  Model Weights:     Kimi-K3-IQ1_S-00001-of-00094.gguf
+  Context Window:    -c 131073
+  Execution Flags:   --reasoning-preserve --no-mmap
+  
+  CORE SOURCE PROMPT:
+  "Write a complete, single-file HTML5 Canvas clone of Contra (1987) for my website. Use clean 
+  canvas-drawn vector shapes for assets. Do not skip, stub, or condense any functions.
+  
+  Use your deep reasoning tokens to ensure that the side-scrolling mechanics and projectile states are rock-solid.
+  Focus specifically on:
+  1. SCROLLING VIEWPORT: Implement a horizontal side-scrolling camera loop where the background and platforms 
+  shift left as the player runs right.
+  2. PLATFORM COLLISION: Program robust 2D gravity physics that allow the player to jump onto solid platforms 
+  and drop down through bridges when pressing Down + Spacebar.
+  3. 8-WAY SHOOTING: Implement keyboard state tracking that allows the player's vector bullets to fire in 8 
+  distinct directions (up, down, left, right, and diagonals) based on combined arrow-key inputs.
+  4. ENEMY SPAWNING: Create a simple array system that spawns stationary turrets and running foot-soldiers 
+  at specific X-coordinates ahead of the scrolling camera view."
+  ========================================================================== -->
+
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contra HTML5 Clone</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; height: 100%; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { background: #000; display: block; }
+  .wrap { text-align: center; }
+  p { color: #888; font: 12px monospace; margin: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="game" width="800" height="600"></canvas>
+  <p>&larr; &rarr; run &middot; SPACE jump &middot; &uarr;+SPACE drop &middot; Z fire &middot; ENTER start</p>
+</div>
+
+<script>
+"use strict";
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = 800, H = 600;
+
+let state = "menu";
+let score = 0, hiScore = 0, lives = 3, level = 1;
+let player = null;
+let platforms = [], spawnEntries = [], enemies = [];
+let bullets = [], enemyBullets = [], explosions = [];
+let camera = { x: 0 };
+let worldWidth = 3200, goalX = 0;
+let fireTimer = 0, timer = 0;
+const keys = {};
+
+let audio = null;
+function beep(freq, dur = 0.1) {
+  try {
+    if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.connect(g); g.connect(audio.destination);
+    o.frequency.value = freq; g.gain.value = 0.07;
+    o.start(); o.stop(audio.currentTime + dur);
+  } catch (e) {}
+}
+
+function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+function aabb(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x &&
+         a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+// ---------- world / scrolling viewport ----------
+function buildWorld() {
+  worldWidth = 3200 + (level - 1) * 400;
+  platforms = [];
+  platforms.push({ x: 0, y: H - 60, w: worldWidth, bridge: false });      // solid ground
+  const bridges = [
+    { x: 400, y: H - 200, w: 200 }, { x: 900, y: H - 260, w: 180 },
+    { x: 1400, y: H - 180, w: 160 }, { x: 1900, y: H - 240, w: 200 },
+    { x: 2400, y: H - 180, w: 180 }, { x: 2800, y: H - 260, w: 160 }
+  ];
+  for (const b of bridges) platforms.push({ x: b.x, y: b.y, w: b.w, bridge: true });
+
+  spawnEntries = [];
+  const m = (level - 1) * 30;
+  spawnEntries.push({ triggerX: 720, type: "turret", x: 800, y: H - 100 });
+  spawnEntries.push({ triggerX: 1520, type: "turret", x: 1600, y: H - 100 });
+  spawnEntries.push({ triggerX: 2220, type: "turret", x: 2300, y: H - 180 - 40 });
+  spawnEntries.push({ triggerX: 2820, type: "turret", x: 2900, y: H - 100 });
+  const soldierXs = [1000, 1200, 1500, 1800, 2100, 2500, 2700, 3000];
+  for (const x of soldierXs)
+    spawnEntries.push({ triggerX: x - 80, type: "soldier", x: x, y: H - 90, speed: 80 + m });
+  goalX = worldWidth - 80;
+  enemies = []; bullets = []; enemyBullets = []; explosions = [];
+  camera = { x: 0 };
+}
+
+function resetPlayer() {
+  player = {
+    x: 80, y: H - 60 - 36, w: 24, h: 36,
+    vx: 0, vy: 0, speed: 220, grav: 900, jumpV: 420,
+    state: "ground", standing: platforms[0], onBridge: false,
+    face: 1, aimX: 1, aimY: 0,
+    dropTimer: 0, invuln: 2, run: 0
+  };
+}
+
+function updateCamera() {
+  camera.x = clamp(player.x - W * 0.35, 0, worldWidth - W);
+}
+
+// ---------- enemy spawning (ahead of the scrolling camera) ----------
+function spawnEnemies() {
+  for (const s of spawnEntries) {
+    if (!s.spawned && camera.x + W >= s.triggerX) {
+      s.spawned = true;
+      if (s.type === "turret")
+        enemies.push({ type: "turret", x: s.x, y: s.y, w: 32, h: 40, aim: 0, fireTimer: 1.0, dead: false });
+      else
+        enemies.push({ type: "soldier", x: s.x, y: s.y, w: 20, h: 30, dir: -1, speed: s.speed, dead: false });
+    }
+  }
+}
+
+// ---------- 8-way shooting ----------
+function fireBullet() {
+  const p = player;
+  let dx = keys["ArrowRight"] ? 1 : keys["ArrowLeft"] ? -1 : 0;
+  let dy = keys["ArrowUp"] ? -1 : keys["ArrowDown"] ? 1 : 0;
+  if (dx === 0 && dy === 0) { dx = p.face; dy = 0; }
+  const len = Math.hypot(dx, dy) || 1;
+  bullets.push({
+    x: p.x + p.w / 2, y: p.y + p.h / 2,
+    vx: dx / len * 500, vy: dy / len * 500,
+    ttl: 1.2, dead: false
+  });
+  beep(700, 0.04);
+}
+
+// ---------- platform collision / 2D gravity physics ----------
+function updatePlayer(dt) {
+  const p = player;
+  let moveDir = 0;
+  if (keys["ArrowLeft"]) moveDir = -1;
+  if (keys["ArrowRight"]) moveDir = 1;
+  p.x += moveDir * p.speed * dt;
+  if (moveDir !== 0) { p.face = moveDir; p.run += Math.abs(moveDir) * p.speed * dt; }
+  p.x = clamp(p.x, 0, worldWidth - p.w);
+
+  p.aimX = keys["ArrowRight"] ? 1 : keys["ArrowLeft"] ? -1 : 0;
+  p.aimY = keys["ArrowUp"] ? -1 : keys["ArrowDown"] ? 1 : 0;
+
+  if (p.dropTimer > 0) p.dropTimer -= dt;
+  if (p.invuln > 0) p.invuln -= dt;
+
+  if (p.state === "ground") {
+    if (keys["Space"]) {
+      if (keys["ArrowDown"] && p.standing && p.standing.bridge) {
+        p.state = "air"; p.dropTimer = 0.25; p.vy = 0; p.y += 2;   // drop through bridge
+      } else {
+        p.vy = -p.jumpV; p.state = "air";                          // jump
+      }
+    }
+    if (p.standing && !(p.x + p.w > p.standing.x && p.x < p.standing.x + p.standing.w)) {
+      p.state = "air"; p.vy = 0;                                   // walked off edge
+    }
+  }
+
+  if (p.state === "air") {
+    const oldY = p.y;
+    p.vy += p.grav * dt;
+    p.y += p.vy * dt;
+    if (p.vy > 0) {
+      for (const pl of platforms) {
+        if (p.dropTimer > 0 && pl.bridge) continue;
+        const oldBottom = oldY + p.h, newBottom = p.y + p.h;
+        if (pl.y >= oldBottom && pl.y <= newBottom &&
+            p.x + p.w > pl.x && p.x < pl.x + pl.w) {
+          p.y = pl.y - p.h; p.vy = 0; p.state = "ground"; p.standing = pl;
+        }
+      }
+    }
+    if (p.y > H + 200) killPlayer();
+  }
+
+  fireTimer -= dt;
+  if (keys["KeyZ"] && fireTimer <= 0) {
+    fireTimer = 0.12;
+    fireBullet();
+  }
+
+  if (p.x + p.w >= goalX) {
+    state = "win"; timer = 2;
+    score += 500 + level * 500;
+    beep(600, 0.4);
+  }
+}
+
+function updateEnemies(dt) {
+  for (const e of enemies) {
+    if (e.type === "turret") {
+      const dx = player.x + player.w / 2 - (e.x + e.w / 2);
+      const dy = player.y + player.h / 2 - (e.y + e.h / 2);
+      e.aim = Math.atan2(dy, dx);
+      e.fireTimer -= dt;
+      if (e.fireTimer <= 0) {
+        e.fireTimer = Math.max(0.6, 1.4 - (level - 1) * 0.1);
+        const d = Math.hypot(dx, dy) || 1;
+        enemyBullets.push({
+          x: e.x + e.w / 2, y: e.y + e.h / 2,
+          vx: dx / d * 220, vy: dy / d * 220,
+          ttl: 2.5, dead: false
+        });
+      }
+    } else {
+      e.x += e.dir * e.speed * dt;
+      if (e.x + e.w < camera.x - 40) e.dead = true;
+    }
+  }
+  enemies = enemies.filter(e => !e.dead && e.x + e.w > camera.x - 200);
+}
+
+function updateBullets(dt) {
+  for (const b of bullets) {
+    b.x += b.vx * dt; b.y += b.vy * dt;
+    b.ttl -= dt;
+    if (b.ttl <= 0 || b.x - camera.x < -20 || b.x - camera.x > W + 20) b.dead = true;
+  }
+  bullets = bullets.filter(b => !b.dead);
+  for (const b of enemyBullets) {
+    b.x += b.vx * dt; b.y += b.vy * dt;
+    b.ttl -= dt;
+    if (b.ttl <= 0) b.dead = true;
+  }
+  enemyBullets = enemyBullets.filter(b => !b.dead);
+}
+
+function updateExplosions(dt) {
+  for (const e of explosions) e.ttl -= dt;
+  explosions = explosions.filter(e => e.ttl > 0);
+}
+
+function killPlayer() {
+  if (player.invuln > 0 || state !== "play") return;
+  state = "dead"; timer = 1.6;
+  explosions.push({ x: player.x + player.w / 2, y: player.y + player.h / 2, ttl: 0.5 });
+  beep(80, 0.4);
+}
+
+function runCollisions() {
+  for (const b of bullets) {
+    for (const e of enemies) {
+      if (!e.dead && aabb(b, e)) {
+        e.dead = true; b.dead = true;
+        score += e.type === "turret" ? 100 : 50;
+        explosions.push({ x: e.x + e.w / 2, y: e.y + e.h / 2, ttl: 0.4 });
+        beep(150, 0.06);
+      }
+    }
+  }
+  bullets = bullets.filter(b => !b.dead);
+  for (const b of enemyBullets) {
+    if (aabb(b, player)) { b.dead = true; killPlayer(); }
+  }
+  for (const e of enemies) {
+    if (!e.dead && aabb(e, player)) killPlayer();
+  }
+}
+
+function update(dt) {
+  if (score > hiScore) hiScore = score;
+  if (state === "play") {
+    updatePlayer(dt);
+    updateCamera();
+    spawnEnemies();
+    updateEnemies(dt);
+    updateBullets(dt);
+    updateExplosions(dt);
+    runCollisions();
+  } else if (state === "dead" || state === "win") {
+    updateExplosions(dt);
+    timer -= dt;
+    if (timer <= 0) {
+      if (state === "dead") {
+        lives--;
+        if (lives > 0) { resetPlayer(); player.invuln = 2; state = "play"; }
+        else state = "gameover";
+      } else {
+        level++;
+        buildWorld();
+        resetPlayer();
+        state = "play";
+      }
+    }
+  }
+}
+
+// ---------- vector drawing ----------
+function drawBackground() {
+  ctx.fillStyle = "#021"; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "#7cf";
+  for (let i = 0; i < 60; i++) {
+    const x = (i * 137 + Math.floor(camera.x * 0.2)) % W;
+    ctx.fillRect(x, (i * 89) % (H / 2), 2, 2);
+  }
+  ctx.fillStyle = "#234";
+  for (let i = 0; i < 8; i++) {
+    const x = (i * 220 - camera.x * 0.5) % (W + 220);
+    ctx.beginPath();
+    ctx.moveTo(x, H - 60); ctx.lineTo(x + 110, H - 260); ctx.lineTo(x + 220, H - 60);
+    ctx.fill();
+  }
+}
+
+function drawPlatforms() {
+  for (const pl of platforms) {
+    const dx = pl.x - camera.x;
+    if (dx + pl.w < -20 || dx > W + 20) continue;
+    if (!pl.bridge) {
+      ctx.fillStyle = "#2a2";
+      ctx.fillRect(dx, pl.y, pl.w, H - pl.y);
+      ctx.fillStyle = "#3a3";
+      for (let x = dx + 8; x < dx + pl.w; x += 24) ctx.fillRect(x, pl.y + 8, 3, 3);
+    } else {
+      ctx.fillStyle = "#c14040";
+      ctx.fillRect(dx, pl.y, pl.w, 10);
+      ctx.fillStyle = "#7a1408";
+      for (let x = dx + 8; x < dx + pl.w - 4; x += 16) ctx.fillRect(x, pl.y + 4, 3, 3);
+      ctx.fillStyle = "#c14040";
+      ctx.fillRect(dx + 10, pl.y + 10, 6, 20);
+      ctx.fillRect(dx + pl.w - 16, pl.y + 10, 6, 20);
+    }
+  }
+}
+
+function drawPlayer() {
+  const p = player;
+  if (p.invuln > 0 && Math.floor(performance.now() / 120) % 2) return;
+  const dx = p.x - camera.x;
+  const cx = dx + p.w / 2;
+  const legOff = Math.sin(p.run * 0.2) * 4;
+  ctx.fillStyle = "#7cf";
+  ctx.fillRect(cx - 6 + legOff, p.y + p.h - 12, 5, 12);
+  ctx.fillRect(cx + 1 - legOff, p.y + p.h - 12, 5, 12);
+  ctx.fillStyle = "#e03024";
+  ctx.fillRect(cx - 6, p.y + 8, 12, 14);
+  ctx.fillStyle = "#ffbd8a";
+  ctx.fillRect(cx - 5, p.y, 10, 8);
+  const aim = Math.atan2(p.aimY, p.aimX || p.face);
+  ctx.save();
+  ctx.translate(cx, p.y + 14);
+  ctx.rotate(aim);
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, -2, 18, 4);
+  ctx.restore();
+}
+
+function drawEnemy(e) {
+  const dx = e.x - camera.x;
+  if (e.type === "turret") {
+    ctx.fillStyle = "#c8c8c8";
+    ctx.fillRect(dx, e.y + e.h - 16, e.w, 16);
+    ctx.save();
+    ctx.translate(dx + e.w / 2, e.y + 8);
+    ctx.rotate(e.aim);
+    ctx.fillStyle = "#888";
+    ctx.fillRect(0, -3, 24, 6);
+    ctx.restore();
+  } else {
+    const cx = dx + e.w / 2;
+    const legOff = Math.sin(performance.now() / 100 + e.x) * 3;
+    ctx.fillStyle = "#f7f";
+    ctx.fillRect(cx - 5 + legOff, e.y + e.h - 10, 4, 10);
+    ctx.fillRect(cx + 1 - legOff, e.y + e.h - 10, 4, 10);
+    ctx.fillRect(cx - 5, e.y + 6, 10, 12);
+    ctx.fillStyle = "#ffbd8a";
+    ctx.fillRect(cx - 4, e.y, 8, 6);
+  }
+}
+
+function drawBullets() {
+  ctx.strokeStyle = "#7cf"; ctx.lineWidth = 2;
+  for (const b of bullets) {
+    const dx = b.x - camera.x;
+    ctx.beginPath();
+    ctx.moveTo(dx, b.y);
+    ctx.lineTo(dx - b.vx * 0.02, b.y - b.vy * 0.02);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#f7f";
+  for (const b of enemyBullets)
+    ctx.fillRect(b.x - camera.x - 2, b.y - 2, 4, 4);
+}
+
+function drawExplosions() {
+  for (const e of explosions) {
+    const r = Math.max(1, (0.5 - e.ttl) * 50);
+    ctx.strokeStyle = "#ff0"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(e.x - camera.x, e.y, r, 0, 7); ctx.stroke();
+  }
+}
+
+function drawGoal() {
+  const dx = goalX - camera.x;
+  if (dx < -100 || dx > W + 100) return;
+  ctx.fillStyle = "#7cf";
+  ctx.fillRect(dx, H - 200, 60, 140);
+  ctx.fillStyle = "#f7f";
+  ctx.fillRect(dx + 10, H - 220, 40, 20);
+  ctx.fillStyle = "#e03024";
+  ctx.fillRect(dx + 20, H - 180, 20, 20);
+}
+
+function drawHUD() {
+  ctx.fillStyle = "#fff"; ctx.font = "16px monospace";
+  ctx.textAlign = "left";
+  ctx.fillText("SCORE " + score, 10, 20);
+  ctx.fillText("LEVEL " + level, 10, 40);
+  ctx.textAlign = "right";
+  ctx.fillText("HI " + hiScore, W - 10, 20);
+  ctx.fillText("LIVES " + lives, W - 10, 40);
+}
+
+function overlayText(lines, color, size, dy) {
+  ctx.fillStyle = color; ctx.font = size + "px monospace"; ctx.textAlign = "center";
+  lines.forEach((s, i) => ctx.fillText(s, W / 2, dy + i * (size + 10)));
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  drawBackground();
+  drawPlatforms();
+  drawGoal();
+  for (const e of enemies) drawEnemy(e);
+  drawBullets();
+  drawPlayer();
+  drawExplosions();
+  drawHUD();
+
+  if (state === "menu") {
+    ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(0, 0, W, H);
+    overlayText(["CONTRA"], "#e03024", 48, 200);
+    overlayText(["HTML5 CLONE"], "#7cf", 20, 260);
+    overlayText(["Run right, blast enemies, reach the fortress!", "Press ENTER to start"], "#fff", 16, 340);
+  }
+  if (state === "dead") overlayText(["OUCH!"], "#f7f", 32, 300);
+  if (state === "win") overlayText(["LEVEL " + level + " COMPLETED!", "+500"], "#7cf", 28, 300);
+  if (state === "gameover") {
+    ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(0, 0, W, H);
+    overlayText(["GAME OVER", "Press ENTER"], "#f7f", 32, 300);
+  }
+}
+
+addEventListener("keydown", e => {
+  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Space"].includes(e.code))
+    e.preventDefault();
+  keys[e.code] = true;
+  if (e.code === "Enter") {
+    if (state === "menu") {
+      score = 0; lives = 3; level = 1;
+      buildWorld(); resetPlayer();
+      state = "play";
+    } else if (state === "gameover") state = "menu";
+  }
+});
+addEventListener("keyup", e => keys[e.code] = false);
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+buildWorld();
+resetPlayer();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
