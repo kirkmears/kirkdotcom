@@ -28,7 +28,7 @@
     <tbody>      
         <tr>
             <td style="text-align: center;"><a href="http://192.168.1.19:8080/" target="_blank"><img src="icons/OI.logo.png" alt="" width="42" height="42"></a></td>
-            <td style="text-align: center;"><a href="http://192.168.3.50:8123/" target="_blank"><img src="icons/homeass.png" alt="" width="40" height="40"></a></td>
+            <td style="text-align: center;"><a href="http://192.168.0.50:8123/" target="_blank"><img src="icons/homeass.png" alt="" width="40" height="40"></a></td>
 	    <td style="text-align: center;"><a href="http://192.168.1.4/admin/login.php" target="_blank"><img src="icons/Pi-Hole.svg" alt="" width="42" height="42"></a></td>
 	    <td style="text-align: center;"><a href="https://192.168.1.19:8043/" target="_blank"><img src="icons/omada.svg" alt="" width="42" height="42"></a></td>
             <td style="text-align: center;"><a href="http://192.168.3.65:8080/" target="_blank"><img src="icons/OI.logo.png" alt="" width="42" height="42"></a></td>
