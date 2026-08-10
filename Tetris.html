@@ -1,0 +1,554 @@
+<!-- =======================================================================
+  KIRKADIA ARCADE SHOWROOM
+  ==========================================================================
+  Cabinet:           [Left Wall / Right Wall Slot]
+  Game Title:        Tetris Clone (1979/1980)
+  Host Environment:  kirkdotcom.azurewebsites.net
+  
+  RUNTIME ARCHITECTURE & ENGINE FLAGS:
+  Binary / Server:   llama-server.exe (llama.cpp build)
+  Model Weights:     Kimi-K3-IQ1_S-00001-of-00094.gguf
+  Context Window:    -c 131073
+  Execution Flags:   --reasoning-preserve --no-mmap
+  
+  CORE SOURCE PROMPT:
+  "Write a complete, single-file HTML5 Canvas clone of Tetris (1989) for my website. Use clean canvas-drawn vector shapes with distinct retro colors for the different tetromino shapes. Do not skip, stub, or condense any functions.
+
+Use your deep reasoning tokens to ensure the piece rotation math and line-clearing matrix loops are rock-solid. Focus specifically on:
+1. THE BOARD MATRIX: Implement a 10x20 grid array representing the playfield to track locked blocks, initialized to 0.
+2. TETROMINO ROTATION (WALL KICKS): Map out the 7 standard tetromino shapes (I, J, L, O, S, T, Z) as index matrices. Implement a rotation function that checks for boundary collisions against the grid walls or existing blocks, preventing the piece from rotating if it clips out of bounds.
+3. LINE CLEARANCE LOOP: Write a scan function that checks the 10x20 matrix from bottom to top after a piece locks. If a row is entirely full, splice it out of the array, unshift a brand-new empty row at the top, and increment the player's score.
+4. CONTROLS & FAST DROP: Implement responsive keyboard handlers for Left/Right movement, Up (Rotate), Down (Soft Drop), and Spacebar (Instant Hard Drop to bottom grid coordinate)."
+  ========================================================================== -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tetris (1989) — HTML5 Canvas Clone</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #0b0b10; color: #e0e0e8; font-family: 'Courier New', monospace; }
+  body { display: flex; flex-direction: column; align-items: center; padding: 20px; }
+  h1 { font-size: 20px; letter-spacing: 4px; margin: 0 0 12px; color: #5cf3f3; text-shadow: 0 0 8px rgba(92,243,243,.4); }
+  canvas { border: 2px solid #333344; box-shadow: 0 0 24px rgba(0,0,0,.6); background: #101015; }
+  p.help { font-size: 12px; color: #8888a0; margin: 12px 0 0; }
+</style>
+</head>
+<body>
+<h1>TETRIS &bull; 1989</h1>
+<canvas id="game"></canvas>
+<p class="help">&#8592; &#8594; move &nbsp; &#8593; rotate &nbsp; &#8595; soft drop &nbsp; SPACE hard drop &nbsp; P pause &nbsp; R restart</p>
+
+<script>
+'use strict';
+
+/* ================================================================
+   CONSTANTS & CANVAS SETUP
+   ================================================================ */
+const COLS = 10;          // grid width
+const ROWS = 20;          // grid height
+const CELL = 30;          // pixel size of one block
+const BOARD_W = COLS * CELL;
+const BOARD_H = ROWS * CELL;
+const PANEL_W = 170;      // side panel for next/score/level/lines
+
+const canvas = document.getElementById('game');
+canvas.width = BOARD_W + PANEL_W;
+canvas.height = BOARD_H;
+const ctx = canvas.getContext('2d');
+
+/* ================================================================
+   TETROMINO SHAPE INDEX MATRICES (I, J, L, O, S, T, Z)
+   Each shape is an NxN index matrix; 1 = filled cell, 0 = empty.
+   ================================================================ */
+const SHAPES = {
+  I: [
+    [0,0,0,0],
+    [1,1,1,1],
+    [0,0,0,0],
+    [0,0,0,0]
+  ],
+  J: [
+    [1,0,0],
+    [1,1,1],
+    [0,0,0]
+  ],
+  L: [
+    [0,0,1],
+    [1,1,1],
+    [0,0,0]
+  ],
+  O: [
+    [1,1],
+    [1,1]
+  ],
+  S: [
+    [0,1,1],
+    [1,1,0],
+    [0,0,0]
+  ],
+  T: [
+    [0,1,0],
+    [1,1,1],
+    [0,0,0]
+  ],
+  Z: [
+    [1,1,0],
+    [0,1,1],
+    [0,0,0]
+  ]
+};
+
+// Retro per-shape colors (classic NES-style palette)
+const TYPE_IDS = { I: 1, J: 2, L: 3, O: 4, S: 5, T: 6, Z: 7 };
+const COLORS = {
+  1: '#5CF3F3',  // I — cyan
+  2: '#5C5CF5',  // J — blue
+  3: '#F5A05C',  // L — orange
+  4: '#F5D05C',  // O — yellow
+  5: '#5CF35C',  // S — green
+  6: '#B85CF5',  // T — purple
+  7: '#F55C5C'   // Z — red
+};
+
+// Scoring table indexed by number of rows cleared at once
+const LINE_POINTS = [0, 100, 300, 500, 800];
+
+// Wall-kick candidates tried in order after rotation:
+// [dx, dy] pairs. dy = -1 moves UP (y increases downward).
+const KICKS = [
+  [0, 0],
+  [1, 0], [-1, 0],
+  [2, 0], [-2, 0],
+  [0, -1], [1, -1], [-1, -1],
+  [2, -1], [-2, -1]
+];
+
+/* ================================================================
+   1. THE BOARD MATRIX — 10x20 grid of locked blocks, init to 0
+   ================================================================ */
+let board = [];
+function resetBoard() {
+  board = [];
+  for (let y = 0; y < ROWS; y++) {
+    board.push(new Array(COLS).fill(0));
+  }
+}
+resetBoard();
+
+/* ================================================================
+   GAME STATE
+   ================================================================ */
+let piece = null;        // active falling piece { type, id, matrix, x, y }
+let nextType = null;     // upcoming piece type for preview
+let score = 0;
+let lines = 0;
+let level = 0;
+let dropInterval = computeInterval(level);
+let dropAcc = 0;         // gravity accumulator
+let lastFrame = 0;       // last timestamp for rAFDelta
+let paused = false;
+let gameOver = false;
+
+function computeInterval(lv) {
+  // Speed up as level rises; floor at 60ms
+  return Math.max(60, 600 - lv * 55);
+}
+
+function cloneMatrix(m) {
+  // Deep copy of an NxN matrix (array of row arrays)
+  return m.map(row => row.slice());
+}
+
+function randomType() {
+  const keys = Object.keys(SHAPES);
+  return keys[Math.floor(Math.random() * keys.length)];
+}
+
+function spawnPiece() {
+  const type = (nextType === null) ? randomType() : nextType;
+  nextType = randomType();
+  const matrix = cloneMatrix(SHAPES[type]);
+  const size = matrix.length;
+  const x = Math.floor((COLS - size) / 2); // center the bounding box
+  const y = 0;
+  piece = { type: type, id: TYPE_IDS[type], matrix: matrix, x: x, y: y };
+  // If the freshly spawned piece already overlaps locked blocks -> game over
+  if (collides(piece.matrix, piece.x, piece.y)) {
+    gameOver = true;
+  }
+}
+
+/* ================================================================
+   COLLISION CHECK — matrix cells vs walls, floor, and locked blocks
+   ================================================================ */
+function collides(matrix, px, py) {
+  const size = matrix.length;
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      if (matrix[r][c] === 0) continue;
+      const bx = px + c;   // board column of this cell
+      const by = py + r;   // board row of this cell
+      if (bx < 0 || bx >= COLS) return true;              // clips side walls
+      if (by >= ROWS) return true;                        // clips the floor
+      if (by >= 0 && board[by][bx] !== 0) return true;    // overlaps locked block
+    }
+  }
+  return false;
+}
+
+/* ================================================================
+   2. TETROMINO ROTATION (WALL KICKS)
+   90° clockwise matrix rotation: out[r][c] = m[N-1-c][r]
+   (verified: a cell at top-left (0,0) maps to top-right (0,N-1);
+   the T piece's up-bump maps to a right-bump, etc.)
+   ================================================================ */
+function rotateMatrixCW(m) {
+  const N = m.length;
+  const out = [];
+  for (let r = 0; r < N; r++) {
+    out.push(new Array(N).fill(0));
+  }
+  for (let r = 0; r < N; r++) {
+    for (let c = 0; c < N; c++) {
+      out[r][c] = m[N - 1 - c][r];
+    }
+  }
+  return out;
+}
+
+function rotatePiece() {
+  if (piece.type === 'O') return; // 2x2 square: rotation is visually identical
+  const rotated = rotateMatrixCW(piece.matrix);
+  // Try rotation at each kick offset until one fits (boundary collision check)
+  for (let i = 0; i < KICKS.length; i++) {
+    const nx = piece.x + KICKS[i][0];
+    const ny = piece.y + KICKS[i][1];
+    if (!collides(rotated, nx, ny)) {
+      piece.matrix = rotated;
+      piece.x = nx;
+      piece.y = ny;
+      return;
+    }
+  }
+  // No valid position found -> rotation is PREVENTED (would clip out of bounds)
+}
+
+/* ================================================================
+   MOVEMENT (Left/Right) and DROP (Soft/Hard)
+   ================================================================ */
+function moveLeft() {
+  if (!collides(piece.matrix, piece.x - 1, piece.y)) {
+    piece.x -= 1;
+  }
+}
+
+function moveRight() {
+  if (!collides(piece.matrix, piece.x + 1, piece.y)) {
+    piece.x += 1;
+  }
+}
+
+function softDrop() {
+  // Down arrow: nudge one row down (award 1 point); if grounded, lock it
+  if (!collides(piece.matrix, piece.x, piece.y + 1)) {
+    piece.y += 1;
+    score += 1;
+  } else {
+    lockPiece();
+  }
+}
+
+function hardDrop() {
+  // Spacebar: instantly fall to the bottom grid coordinate, then lock
+  let dist = 0;
+  while (!collides(piece.matrix, piece.x, piece.y + 1)) {
+    piece.y += 1;
+    dist += 1;
+  }
+  score += dist * 2;  // hard-drop bonus: 2 points per row dropped
+  lockPiece();
+}
+
+/* ================================================================
+   3. LINE CLEARANCE LOOP — scan bottom-to-top; splice/unshift
+   ================================================================ */
+function clearLines() {
+  let cleared = 0;
+  let y = ROWS - 1;               // start at the bottom row
+  while (y >= 0) {
+    let full = true;
+    for (let x = 0; x < COLS; x++) {
+      if (board[y][x] === 0) { full = false; break; }
+    }
+    if (full) {
+      board.splice(y, 1);                       // splice out the full row
+      board.unshift(new Array(COLS).fill(0));   // unshift a brand-new empty row at the top
+      cleared++;
+      // Rows above shifted down by one; re-scan SAME index y
+      // (its new content is the old row y-1, not yet checked).
+    } else {
+      y--;                                      // move scan upward
+    }
+  }
+  return cleared;
+}
+
+/* ================================================================
+   LOCK PIECE INTO MATRIX + SCORING + LEVEL-UP
+   ================================================================ */
+function lockPiece() {
+  const size = piece.matrix.length;
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      if (piece.matrix[r][c] === 0) continue;
+      const bx = piece.x + c;
+      const by = piece.y + r;
+      if (by >= 0 && by < ROWS && bx >= 0 && bx < COLS) {
+        board[by][bx] = piece.id;   // stamp color id into locked matrix
+      }
+    }
+  }
+  const cleared = clearLines();
+  if (cleared > 0) {
+    score += LINE_POINTS[cleared] * (level + 1);
+    lines += cleared;
+    const newLevel = Math.floor(lines / 10);
+    if (newLevel !== level) {
+      level = newLevel;
+      dropInterval = computeInterval(level);
+    }
+  }
+  spawnPiece();
+}
+
+/* ================================================================
+   GRAVITY STEP (called by the game loop)
+   ================================================================ */
+function stepDown() {
+  if (!collides(piece.matrix, piece.x, piece.y + 1)) {
+    piece.y += 1;
+  } else {
+    lockPiece();
+  }
+}
+
+/* ================================================================
+   MAIN LOOP (requestAnimationFrame with time accumulator)
+   ================================================================ */
+function frame(t) {
+  if (!paused && !gameOver) {
+    if (lastFrame !== 0) {
+      dropAcc += t - lastFrame;
+      while (dropAcc >= dropInterval) {
+        dropAcc -= dropInterval;
+        stepDown();
+        if (gameOver) break;
+      }
+    }
+  }
+  lastFrame = t;
+  draw();
+  requestAnimationFrame(frame);
+}
+
+/* ================================================================
+   RENDERING — clean canvas vector shapes with retro bevel
+   ================================================================ */
+function drawCell(px, py, colorId, size) {
+  const s = (size === undefined) ? CELL : size;
+  const b = Math.max(2, Math.round(s * 0.15)); // bevel width
+  const base = COLORS[colorId];
+  // base block
+  ctx.fillStyle = base;
+  ctx.fillRect(px + 1, py + 1, s - 2, s - 2);
+  // top + left highlight (retro 3D)
+  ctx.fillStyle = 'rgba(255,255,255,0.45)';
+  ctx.fillRect(px + 1, py + 1, s - 2, b);
+  ctx.fillRect(px + 1, py + 1, b, s - 2);
+  // bottom + right shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillRect(px + 1, py + s - 1 - b, s - 2, b);
+  ctx.fillRect(px + s - 1 - b, py + 1, b, s - 2);
+}
+
+function drawGhostCell(px, py) {
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(px + 2, py + 2, CELL - 4, CELL - 4);
+}
+
+function drawMatrixAt(matrix, id, gx, gy, ghost) {
+  const size = matrix.length;
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      if (matrix[r][c] === 0) continue;
+      const bx = gx + c;
+      const by = gy + r;
+      if (by < 0) continue;              // above top edge (after up-kick)
+      const px = bx * CELL;
+      const py = by * CELL;
+      if (ghost) drawGhostCell(px, py);
+      else drawCell(px, py, id, CELL);
+    }
+  }
+}
+
+function draw() {
+  // background
+  ctx.fillStyle = '#101015';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // faint grid lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= COLS; x++) {
+    ctx.beginPath();
+    ctx.moveTo(x * CELL + 0.5, 0);
+    ctx.lineTo(x * CELL + 0.5, BOARD_H);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= ROWS; y++) {
+    ctx.beginPath();
+    ctx.moveTo(0, y * CELL + 0.5);
+    ctx.lineTo(BOARD_W, y * CELL + 0.5);
+    ctx.stroke();
+  }
+
+  // board frame
+  ctx.strokeStyle = '#333344';
+  ctx.strokeRect(0.5, 0.5, BOARD_W - 1, BOARD_H - 1);
+
+  // locked blocks
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (board[y][x] !== 0) {
+        drawCell(x * CELL, y * CELL, board[y][x], CELL);
+      }
+    }
+  }
+
+  if (!gameOver && piece) {
+    // ghost (landing outline)
+    let gy = piece.y;
+    while (!collides(piece.matrix, piece.x, gy + 1)) gy += 1;
+    if (gy !== piece.y) drawMatrixAt(piece.matrix, piece.id, piece.x, gy, true);
+    // active piece
+    drawMatrixAt(piece.matrix, piece.id, piece.x, piece.y, false);
+  }
+
+  drawPanel();
+
+  if (paused) drawOverlay('PAUSED', 'Press P to resume');
+  if (gameOver) drawOverlay('GAME OVER', 'Press R to restart');
+}
+
+function drawPanel() {
+  const px = BOARD_W + 12;
+  ctx.font = 'bold 14px "Courier New", monospace';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#e0e0e8';
+  ctx.fillText('NEXT', px, 22);
+
+  // next piece preview (scaled vector cells)
+  const previewSize = 18;
+  const m = SHAPES[nextType];
+  const id = TYPE_IDS[nextType];
+  const size = m.length;
+  const ox = px + 6;
+  const oy = 34;
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      if (m[r][c] !== 0) {
+        drawCell(ox + c * previewSize, oy + r * previewSize, id, previewSize);
+      }
+    }
+  }
+
+  // stats
+  ctx.fillStyle = '#e0e0e8';
+  ctx.fillText('SCORE', px, 140);
+  ctx.fillText(String(score), px, 158);
+  ctx.fillText('LEVEL', px, 184);
+  ctx.fillText(String(level), px, 202);
+  ctx.fillText('LINES', px, 228);
+  ctx.fillText(String(lines), px, 246);
+}
+
+function drawOverlay(title, sub) {
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillRect(0, 0, BOARD_W, BOARD_H);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#F5D05C';
+  ctx.font = 'bold 24px "Courier New", monospace';
+  ctx.fillText(title, BOARD_W / 2, BOARD_H / 2 - 20);
+  ctx.fillStyle = '#e0e0e8';
+  ctx.font = '12px "Courier New", monospace';
+  ctx.fillText(sub, BOARD_W / 2, BOARD_H / 2 + 12);
+}
+
+/* ================================================================
+   4. CONTROLS & FAST DROP
+   Left/Right = move, Up = rotate, Down = soft drop, Space = hard drop
+   P = pause toggle, R = restart
+   ================================================================ */
+document.addEventListener('keydown', function (e) {
+  const k = e.key;
+
+  if (k === 'r' || k === 'R') {
+    restart();
+    e.preventDefault();
+    return;
+  }
+  if (k === 'p' || k === 'P') {
+    paused = !paused;
+    e.preventDefault();
+    return;
+  }
+  if (gameOver || paused) return;
+
+  switch (k) {
+    case 'ArrowLeft':
+      moveLeft();
+      break;
+    case 'ArrowRight':
+      moveRight();
+      break;
+    case 'ArrowUp':
+      rotatePiece();
+      break;
+    case 'ArrowDown':
+      softDrop();
+      break;
+    case ' ':
+      hardDrop();
+      break;
+    default:
+      return;
+  }
+  e.preventDefault();
+});
+
+/* ================================================================
+   RESTART / BOOT
+   ================================================================ */
+function restart() {
+  resetBoard();
+  score = 0;
+  lines = 0;
+  level = 0;
+  dropInterval = computeInterval(level);
+  dropAcc = 0;
+  paused = false;
+  gameOver = false;
+  nextType = null;
+  spawnPiece();
+}
+
+restart();                 // initial spawn
+requestAnimationFrame(frame);  // start main loop
+</script>
+</body>
+</html>
+
