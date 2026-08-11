@@ -18,7 +18,10 @@ RUNTIME ARCHITECTURE & ENGINE FLAGS:
   but that's for another day. Right now, I'm just trying to make the dates current so 
   that when someone opens the page, it will show today, plus 10 additional days. 
   Provide an updated weather.html page for me.
-  "
+  v2: I've uploaded my weather.html website you've been helping me with. it's great so far.
+  I would like to remove the zero percent chances of rainfall boxes. In addition to that, 
+  there seems to be an issue getting the data towards the end of the week (aug 18,19,20). 
+  you may be able to tell by the temps in the attached pdf"
   ========================================================================== -->
 <!DOCTYPE html>
 <html lang="en">
@@ -67,17 +70,19 @@ RUNTIME ARCHITECTURE & ENGINE FLAGS:
             position: relative;
         }
 
-            .main-header h1 {
-                color: #0A539E;
-                font-size: 2rem;
-                text-transform: uppercase;
-                letter-spacing: 2px;
-                font-weight: 900;
-            }
+        .main-header h1 {
+            color: #0A539E;
+            font-size: 2rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-weight: 900;
+        }
 
         .striped-bar {
             height: 12px;
-            background: repeating-linear-gradient( 45deg, var(--accent-yellow), var(--accent-yellow) 8px, #FAF0AF 8px, #FAF0AF 16px );
+            background: repeating-linear-gradient(45deg,
+                var(--accent-yellow), var(--accent-yellow) 8px,
+                #FAF0AF 8px, #FAF0AF 16px);
             width: 100%;
         }
 
@@ -97,9 +102,9 @@ RUNTIME ARCHITECTURE & ENGINE FLAGS:
             position: relative;
         }
 
-            .day-column:not(:last-child) {
-                border-right: 2px solid var(--divider-line);
-            }
+        .day-column:not(:last-child) {
+            border-right: 2px solid var(--divider-line);
+        }
 
         .temp-section {
             width: 100%;
@@ -164,24 +169,17 @@ RUNTIME ARCHITECTURE & ENGINE FLAGS:
             font-size: 1.1rem;
             font-weight: 900;
             color: #FF5500;
-            text-shadow: 1px 1px 0px #FFF, -1px -1px 0px #FFF, 1px -1px 0px #FFF, -1px 1px 0px #FFF;
+            text-shadow: 1px 1px 0px #FFF, -1px -1px 0px #FFF,
+                         1px -1px 0px #FFF, -1px 1px 0px #FFF;
             text-transform: uppercase;
             animation: pulse 2s infinite ease-in-out;
             z-index: 10;
         }
 
         @keyframes pulse {
-            0% {
-                transform: scale(1);
-            }
-
-            50% {
-                transform: scale(1.1);
-            }
-
-            100% {
-                transform: scale(1);
-            }
+            0%   { transform: scale(1); }
+            50%  { transform: scale(1.1); }
+            100% { transform: scale(1); }
         }
 
         .spacer {
@@ -221,11 +219,9 @@ RUNTIME ARCHITECTURE & ENGINE FLAGS:
             .grid-container {
                 grid-template-columns: repeat(6, 1fr);
             }
-
             .day-column:nth-child(6) {
                 border-right: none;
             }
-
             .day-column {
                 border-bottom: 2px solid var(--divider-line);
             }
@@ -235,14 +231,12 @@ RUNTIME ARCHITECTURE & ENGINE FLAGS:
             .grid-container {
                 grid-template-columns: repeat(3, 1fr);
             }
-
             .day-column {
                 border-right: 2px solid var(--divider-line) !important;
             }
-
-                .day-column:nth-child(3n) {
-                    border-right: none !important;
-                }
+            .day-column:nth-child(3n) {
+                border-right: none !important;
+            }
         }
     </style>
 </head>
@@ -255,205 +249,306 @@ RUNTIME ARCHITECTURE & ENGINE FLAGS:
         <div class="striped-bar"></div>
         <div class="grid-container" id="grid"></div>
     </div>
+
     <script>
         'use strict';
 
         /* ============================================================
-        SVG ICON TEMPLATES (unchanged)
-        ============================================================ */
+           SVG ICON TEMPLATES
+           ============================================================ */
         const ICONS = {
-        sunCloudRays:
-        '<svg class="weather-svg" viewBox="0 0 100 100">' +
-        '<circle cx="35" cy="35" r="18" fill="#F0C424" />' +
-        '<path d="M 35 10 L 35 2 M 35 60 L 35 52 M 10 35 L 2 35 M 60 35 L 52 35 M 17 17 L 11 11 M 53 53 L 59 59 M 17 53 L 11 59 M 53 17 L 59 11" stroke="#F0C424" stroke-width="4" />' +
-        '<path d="M45,65 C45,53 57,48 65,50 C70,42 85,45 85,55 C93,55 95,65 90,70 C90,75 45,75 45,65 Z" fill="#FFFFFF" stroke="#0A539E" stroke-width="2" />' +
-        '</svg>',
-        rain:
-        '<svg class="weather-svg" viewBox="0 0 100 100">' +
-        '<path d="M25,55 C25,40 42,35 52,40 C58,30 78,32 80,45 C90,45 95,55 88,65 C88,70 25,70 25,55 Z" fill="#FFFFFF" stroke="#0A539E" stroke-width="2" />' +
-        '<path d="M40,68 L35,80 M55,68 L50,80 M70,68 L65,80" stroke="#24A0F0" stroke-width="4" stroke-linecap="round" />' +
-        '<path d="M32,72 L27,78" stroke="#24A0F0" stroke-width="3" />' +
-        '</svg>',
-        tstormSun:
-        '<svg class="weather-svg" viewBox="0 0 100 100">' +
-        '<circle cx="75" cy="30" r="12" fill="#F0C424" />' +
-        '<path d="M25,55 C25,40 42,35 52,40 C58,30 78,32 80,45 C90,45 95,55 88,65 C88,70 25,70 25,55 Z" fill="#FFFFFF" stroke="#0A539E" stroke-width="2" />' +
-        '<path d="M48,68 L40,78 L48,78 L42,88" fill="none" stroke="#F0C424" stroke-width="3" stroke-linejoin="round" />' +
-        '</svg>',
-        sunny:
-        '<svg class="weather-svg" viewBox="0 0 100 100">' +
-        '<circle cx="50" cy="50" r="20" fill="#F0C424" />' +
-        '<path d="M50,15 L50,2 M50,98 L50,85 M15,50 L2,50 M98,50 L85,50 M25,25 L15,15 M75,75 L85,85 M25,75 L15,85 M75,25 L85,15" stroke="#F0C424" stroke-width="5" />' +
-        '</svg>',
-        sunSimple:
-        '<svg class="weather-svg" viewBox="0 0 100 100">' +
-        '<circle cx="50" cy="50" r="20" fill="#F0C424" />' +
-        '<path d="M50,15 L50,2 M50,98 L50,85 M15,50 L2,50 M98,50 L85,50" stroke="#F0C424" stroke-width="5" />' +
-        '</svg>',
-        sunCloud:
-        '<svg class="weather-svg" viewBox="0 0 100 100">' +
-        '<circle cx="35" cy="35" r="16" fill="#F0C424" />' +
-        '<path d="M45,65 C45,53 57,48 65,50 C70,42 85,45 85,55 C93,55 95,65 90,70 C90,75 45,75 45,65 Z" fill="#FFFFFF" stroke="#0A539E" stroke-width="2" />' +
-        '</svg>'
+            sunCloudRays:
+                '<svg class="weather-svg" viewBox="0 0 100 100">' +
+                '<circle cx="35" cy="35" r="18" fill="#F0C424" />' +
+                '<path d="M 35 10 L 35 2 M 35 60 L 35 52 M 10 35 L 2 35 M 60 35 L 52 35 M 17 17 L 11 11 M 53 53 L 59 59 M 17 53 L 11 59 M 53 17 L 59 11" stroke="#F0C424" stroke-width="4" />' +
+                '<path d="M45,65 C45,53 57,48 65,50 C70,42 85,45 85,55 C93,55 95,65 90,70 C90,75 45,75 45,65 Z" fill="#FFFFFF" stroke="#0A539E" stroke-width="2" />' +
+                '</svg>',
+            rain:
+                '<svg class="weather-svg" viewBox="0 0 100 100">' +
+                '<path d="M25,55 C25,40 42,35 52,40 C58,30 78,32 80,45 C90,45 95,55 88,65 C88,70 25,70 25,55 Z" fill="#FFFFFF" stroke="#0A539E" stroke-width="2" />' +
+                '<path d="M40,68 L35,80 M55,68 L50,80 M70,68 L65,80" stroke="#24A0F0" stroke-width="4" stroke-linecap="round" />' +
+                '<path d="M32,72 L27,78" stroke="#24A0F0" stroke-width="3" />' +
+                '</svg>',
+            tstormSun:
+                '<svg class="weather-svg" viewBox="0 0 100 100">' +
+                '<circle cx="75" cy="30" r="12" fill="#F0C424" />' +
+                '<path d="M25,55 C25,40 42,35 52,40 C58,30 78,32 80,45 C90,45 95,55 88,65 C88,70 25,70 25,55 Z" fill="#FFFFFF" stroke="#0A539E" stroke-width="2" />' +
+                '<path d="M48,68 L40,78 L48,78 L42,88" fill="none" stroke="#F0C424" stroke-width="3" stroke-linejoin="round" />' +
+                '</svg>',
+            sunny:
+                '<svg class="weather-svg" viewBox="0 0 100 100">' +
+                '<circle cx="50" cy="50" r="20" fill="#F0C424" />' +
+                '<path d="M50,15 L50,2 M50,98 L50,85 M15,50 L2,50 M98,50 L85,50 M25,25 L15,15 M75,75 L85,85 M25,75 L15,85 M75,25 L85,15" stroke="#F0C424" stroke-width="5" />' +
+                '</svg>',
+            sunSimple:
+                '<svg class="weather-svg" viewBox="0 0 100 100">' +
+                '<circle cx="50" cy="50" r="20" fill="#F0C424" />' +
+                '<path d="M50,15 L50,2 M50,98 L50,85 M15,50 L2,50 M98,50 L85,50" stroke="#F0C424" stroke-width="5" />' +
+                '</svg>',
+            sunCloud:
+                '<svg class="weather-svg" viewBox="0 0 100 100">' +
+                '<circle cx="35" cy="35" r="16" fill="#F0C424" />' +
+                '<path d="M45,65 C45,53 57,48 65,50 C70,42 85,45 85,55 C93,55 95,65 90,70 C90,75 45,75 45,65 Z" fill="#FFFFFF" stroke="#0A539E" stroke-width="2" />' +
+                '</svg>'
         };
 
         /* ============================================================
-        NWS (api.weather.gov) INTEGRATION
-        ============================================================ */
+           NWS (api.weather.gov) INTEGRATION
+           ============================================================ */
         const LAT = 32.7942;
         const LON = -96.7652;
 
-        // Fallback placeholder used for columns beyond the API's 7 days
-        // and as a safety net if the API is unreachable.
+        // Fallback placeholder used for columns beyond the APIs' coverage
+        // and as a safety net if either API is unreachable.
         const PLACEHOLDER = [
-        { high: 92, low: 71, wind: 'S 10-20',  icon: 'sunCloudRays', pop: '10%' },
-        { high: 87, low: 74, wind: 'S 10-15',  icon: 'rain',         pop: '70%' },
-        { high: 81, low: 71, wind: 'N 10-15',  icon: 'tstormSun',    pop: '70%' },
-        { high: 79, low: 68, wind: 'N 10-20',  icon: 'sunny' },
-        { high: 74, low: 57, wind: 'N 10-15',  icon: 'sunSimple',    badge: 'Fall' },
-        { high: 76, low: 55, wind: 'N/S 5-10', icon: 'sunCloud' },
-        { high: 79, low: 56, wind: 'S 10-15',  icon: 'sunCloud' },
-        { high: 82, low: 59, wind: 'S 10-15',  icon: 'sunCloud' },
-        { high: 83, low: 63, wind: 'S 10-20',  icon: 'sunCloud' },
-        { high: 85, low: 65, wind: 'S 10-20',  icon: 'sunCloud' },
-        { high: 84, low: 64, wind: 'S 10-15',  icon: 'sunCloud',     pop: '20%' }
+            { high: 92, low: 71, wind: 'S 10-20',  icon: 'sunCloudRays', pop: '10%' },
+            { high: 87, low: 74, wind: 'S 10-15',  icon: 'rain',         pop: '70%' },
+            { high: 81, low: 71, wind: 'N 10-15',  icon: 'tstormSun',    pop: '70%' },
+            { high: 79, low: 68, wind: 'N 10-20',  icon: 'sunny' },
+            { high: 74, low: 57, wind: 'N 10-15',  icon: 'sunSimple',    badge: 'Fall' },
+            { high: 76, low: 55, wind: 'N/S 5-10', icon: 'sunCloud' },
+            { high: 79, low: 56, wind: 'S 10-15',  icon: 'sunCloud' },
+            { high: 82, low: 59, wind: 'S 10-15',  icon: 'sunCloud' },
+            { high: 83, low: 63, wind: 'S 10-20',  icon: 'sunCloud' },
+            { high: 85, low: 65, wind: 'S 10-20',  icon: 'sunCloud' },
+            { high: 84, low: 64, wind: 'S 10-15',  icon: 'sunCloud',     pop: '20%' }
         ];
 
         /* Step 1 + Step 2: points lookup -> gridpoint forecast */
         async function fetchNwsDaily() {
-        // /points resolves the lat/lon to a gridpoint + returns the forecast URL.
-        // For your coordinates, properties.forecast points to the FWD office gridpoint.
-        const pointsResp = await fetch('https://api.weather.gov/points/' + LAT + ',' + LON);
-        const points = await pointsResp.json();
-        const forecastUrl = points.properties.forecast;   // e.g. .../gridpoints/FWD/82,69/forecast
+            // /points resolves the lat/lon to a gridpoint + returns the forecast URL.
+            const pointsResp = await fetch('https://api.weather.gov/points/' + LAT + ',' + LON);
+            const points = await pointsResp.json();
+            const forecastUrl = points.properties.forecast;
 
-        const forecastResp = await fetch(forecastUrl);
-        const forecast = await forecastResp.json();
-        return periodsToDaily(forecast.properties.periods);
+            const forecastResp = await fetch(forecastUrl);
+            const forecast = await forecastResp.json();
+            return periodsToDaily(forecast.properties.periods);
         }
 
         /* Convert alternating day/night periods into daily high/low pairs */
         function periodsToDaily(periods) {
-        const days = [];
-        periods.forEach(function (p) {
-        const isNight = /night/i.test(p.name);
-        if (!isNight) {
-        // Daytime period -> high temp + wind/POP/icon details
-        days.push({
-        high: p.temperature,
-        low: null,
-        wind: windString(p),
-        pop: popString(p),
-        icon: iconFromShortForecast(p.shortForecast),
-        badge: null
-        });
-        } else {
-        // Night period -> attach low temp to the most recent day
-        const last = days[days.length - 1];
-        if (last) {
-        last.low = p.temperature;
-        } else {
-        // Rare case: first period is "Tonight" -> create a night-only row
-        days.push({
-        high: null,
-        low: p.temperature,
-        wind: windString(p),
-        pop: popString(p),
-        icon: iconFromShortForecast(p.shortForecast),
-        badge: null
-        });
-        }
-        }
-        });
-        return days;
+            const days = [];
+            periods.forEach(function (p) {
+                const isNight = /night/i.test(p.name);
+                if (!isNight) {
+                    // Daytime period -> high temp + wind/POP/icon details
+                    days.push({
+                        high: p.temperature,
+                        low: null,
+                        wind: windString(p),
+                        pop: popString(p),
+                        icon: iconFromShortForecast(p.shortForecast),
+                        badge: null
+                    });
+                } else {
+                    // Night period -> attach low temp to the most recent day
+                    const last = days[days.length - 1];
+                    if (last) {
+                        last.low = p.temperature;
+                    } else {
+                        // Rare case: first period is "Tonight" -> create a night-only row
+                        days.push({
+                            high: null,
+                            low: p.temperature,
+                            wind: windString(p),
+                            pop: popString(p),
+                            icon: iconFromShortForecast(p.shortForecast),
+                            badge: null
+                        });
+                    }
+                }
+            });
+            return days;
         }
 
         /* Format wind like "S 10-20" from NWS fields */
         function windString(p) {
-        const dir = p.windDirection || '';
-        const speed = (p.windSpeed || '')
-        .replace(/ mph/g, '')
-        .replace(/ to /g, '-');
-        return dir + ' ' + speed;
+            const dir = p.windDirection || '';
+            const speed = (p.windSpeed || '')
+                .replace(/ mph/g, '')
+                .replace(/ to /g, '-');
+            return dir + ' ' + speed;
         }
 
-        /* Precip probability -> "NN%" string (null if missing) */
+        /* Precip probability -> "NN%" string.
+           Returns null when missing OR when the chance is 0%,
+           so no "0%" badge is ever rendered. */
         function popString(p) {
-        const v = p.probabilityOfPrecipitation && p.probabilityOfPrecipitation.value;
-        return (v === null || v === undefined) ? null : Math.round(v) + '%';
+            const v = p.probabilityOfPrecipitation && p.probabilityOfPrecipitation.value;
+            if (v === null || v === undefined) return null;
+            const rounded = Math.round(v);
+            return rounded === 0 ? null : rounded + '%';
         }
 
         /* Map NWS shortForecast text onto our SVG icon keys */
         function iconFromShortForecast(short) {
-        const s = (short || '').toLowerCase();
-        if (s.indexOf('thunder') !== -1) return 'tstormSun';
-        if (s.indexOf('rain') !== -1 || s.indexOf('shower') !== -1) return 'rain';
-        if (s.indexOf('partly') !== -1) return 'sunCloudRays';
-        if (s.indexOf('sunny') !== -1) return 'sunny';
-        if (s.indexOf('cloud') !== -1) return 'sunCloud';
-        return 'sunCloud';
+            const s = (short || '').toLowerCase();
+            if (s.indexOf('thunder') !== -1) return 'tstormSun';
+            if (s.indexOf('rain') !== -1 || s.indexOf('shower') !== -1) return 'rain';
+            if (s.indexOf('partly') !== -1) return 'sunCloudRays';
+            if (s.indexOf('sunny') !== -1) return 'sunny';
+            if (s.indexOf('cloud') !== -1) return 'sunCloud';
+            return 'sunCloud';
         }
 
         /* ============================================================
-        DATE LABEL GENERATION + RENDER (unchanged logic)
-        ============================================================ */
+           OPEN-METEO (extended days beyond NWS's 7-day window)
+           ============================================================ */
+        async function fetchOpenMeteo() {
+            const url =
+                'https://api.open-meteo.com/v1/forecast?' +
+                'latitude=' + LAT + '&longitude=' + LON +
+                '&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
+                '&hourly=wind_speed_10m,wind_direction_10m' +
+                '&temperature_unit=fahrenheit&wind_speed_unit=mph' +
+                '&timezone=auto&forecast_days=16';
+            const resp = await fetch(url);
+            return resp.json();
+        }
+
+        /* WMO weather code -> our SVG icon keys */
+        function iconFromWeatherCode(code) {
+            if (code === 0) return 'sunny';
+            if (code === 1) return 'sunSimple';
+            if (code === 2) return 'sunCloudRays';
+            if (code === 3) return 'sunCloud';
+            if (code === 45 || code === 48) return 'sunCloud';          // fog
+            if ((code >= 51 && code <= 57) ||                           // drizzle
+                (code >= 61 && code <= 67) ||                           // rain
+                (code >= 71 && code <= 77) ||                           // snow
+                (code >= 80 && code <= 82) ||                           // showers
+                code === 84 || code === 86) return 'rain';              // snow showers
+            if (code >= 95) return 'tstormSun';                         // thunderstorm
+            return 'sunCloud';
+        }
+
+        /* Degrees -> 8-point compass */
+        function compassFromDegrees(deg) {
+            const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+            return dirs[Math.round(deg / 45) % 8];
+        }
+
+        /* Midday (12:00) wind for a given date, from Open-Meteo hourly */
+        function hourlyWindAt(data, dateStr) {
+            const h = data.hourly;
+            for (let i = 0; i < h.time.length; i++) {
+                if (h.time[i].indexOf(dateStr + 'T12') === 0) {
+                    return compassFromDegrees(h.wind_direction_10m[i]) +
+                           ' ' + Math.round(h.wind_speed_10m[i]);
+                }
+            }
+            return '';
+        }
+
+        /* Open-Meteo POP -> "NN%" (null when missing or 0%) */
+        function popFromOpenMeteo(d, i) {
+            const v = d.precipitation_probability_max && d.precipitation_probability_max[i];
+            if (v === null || v === undefined) return null;
+            const rounded = Math.round(v);
+            return rounded === 0 ? null : rounded + '%';
+        }
+
+        function dateToYMD(date) {
+            return date.getFullYear() + '-' +
+                String(date.getMonth() + 1).padStart(2, '0') + '-' +
+                String(date.getDate()).padStart(2, '0');
+        }
+
+        /* Build extended columns (indexes startIndex..10) keyed by date */
+        function buildExtended(omData, startIndex) {
+            const map = {};
+            const d = omData.daily;
+            for (let i = 0; i < d.time.length; i++) {
+                map[d.time[i]] = {
+                    high: Math.round(d.temperature_2m_max[i]),
+                    low:  Math.round(d.temperature_2m_min[i]),
+                    wind: hourlyWindAt(omData, d.time[i]),
+                    pop:  popFromOpenMeteo(d, i),
+                    icon: iconFromWeatherCode(d.weathercode[i]),
+                    badge: null
+                };
+            }
+            const out = [];
+            const start = new Date();
+            for (let i = startIndex; i < 11; i++) {
+                const date = new Date(start);
+                date.setDate(start.getDate() + i);
+                out.push(map[dateToYMD(date)] || null);   // null -> placeholder fallback
+            }
+            return out;
+        }
+
+        /* ============================================================
+           DATE LABEL GENERATION + RENDER
+           ============================================================ */
         const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const MONTHS   = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
         function renderForecast(daily) {
-        const grid = document.getElementById('grid');
-        grid.innerHTML = '';
-        const start = new Date(); // today
+            const grid = document.getElementById('grid');
+            grid.innerHTML = '';
+            const start = new Date(); // today
 
-        daily.forEach(function (day, i) {
-        const date = new Date(start);
-        date.setDate(start.getDate() + i);
+            daily.forEach(function (day, i) {
+                const date = new Date(start);
+                date.setDate(start.getDate() + i);
 
-        const weekdayName = WEEKDAYS[date.getDay()];
-        const monthName   = MONTHS[date.getMonth()];
-        const dayNumber   = String(date.getDate()).padStart(2, '0');
-        const isWeekend   = (date.getDay() === 0 || date.getDay() === 6);
+                const weekdayName = WEEKDAYS[date.getDay()];
+                const monthName   = MONTHS[date.getMonth()];
+                const dayNumber   = String(date.getDate()).padStart(2, '0');
+                const isWeekend   = (date.getDay() === 0 || date.getDay() === 6);
 
-        // Icon container: svg + optional Fall badge + optional POP badge
-        let iconInner = '<div class="weather-icon-container">' + ICONS[day.icon];
-        if (day.badge) {
-        iconInner += '<span class="fall-badge">' + day.badge + '</span>';
+                // Icon container: svg + optional Fall badge + optional POP badge
+                let iconInner = '<div class="weather-icon-container">' + ICONS[day.icon];
+                if (day.badge) {
+                    iconInner += '<span class="fall-badge">' + day.badge + '</span>';
+                }
+                if (day.pop) {
+                    iconInner += '<span class="pop-badge">' + day.pop + '</span>';
+                }
+                iconInner += '</div>';
+
+                const col = document.createElement('div');
+                col.className = 'day-column' + (isWeekend ? ' weekend' : '');
+                col.innerHTML =
+                    '<div class="temp-section">' +
+                        '<span class="high-temp">' + (day.high !== null ? day.high : '') + '</span>' +
+                        '<span class="low-temp">'  + (day.low  !== null ? day.low  : '') + '</span>' +
+                    '</div>' +
+                    '<div class="wind-info">' + day.wind + '</div>' +
+                    iconInner +
+                    '<div class="spacer"></div>' +
+                    '<div class="day-label">' + weekdayName + '</div>' +
+                    '<div class="date-badge">' + monthName + ' ' + dayNumber + '</div>';
+
+                grid.appendChild(col);
+            });
         }
-        if (day.pop) {
-        iconInner += '<span class="pop-badge">' + day.pop + '</span>';
-        }
-        iconInner += '</div>';
 
-        const col = document.createElement('div');
-        col.className = 'day-column' + (isWeekend ? ' weekend' : '');
-        col.innerHTML =
-        '<div class="temp-section">' +
-        '<span class="high-temp">' + (day.high !== null ? day.high : '') + '</span>' +
-        '<span class="low-temp">' + (day.low !== null ? day.low : '') + '</span>' +
-        '</div>' +
-        '<div class="wind-info">' + day.wind + '</div>' +
-        iconInner +
-        '<div class="spacer"></div>' +
-        '<div class="day-label">' + weekdayName + '</div>' +
-        '<div class="date-badge">' + monthName + ' ' + dayNumber + '</div>';
-
-        grid.appendChild(col);
-        });
-        }
-
-        /* Boot: fetch live NWS data, pad to 11 columns, render */
+        /* Boot: fetch live NWS + Open-Meteo data, fill 11 columns, render */
         async function loadAndRender() {
-        let daily = [];
-        try {
-        daily = await fetchNwsDaily();
-        } catch (err) {
-        console.warn('api.weather.gov fetch failed; falling back to placeholder data.', err);
-        }
-        // Pad columns 8-11 with placeholder data (NWS only returns 7 days)
-        while (daily.length < 11) {
-        daily.push(PLACEHOLDER[daily.length % PLACEHOLDER.length]);
-        }
-        renderForecast(daily.slice(0, 11));
+            let nwsDaily = [];
+            try {
+                nwsDaily = await fetchNwsDaily();
+            } catch (err) {
+                console.warn('api.weather.gov fetch failed; falling back to placeholder data.', err);
+            }
+
+            let extended = [];
+            try {
+                const om = await fetchOpenMeteo();
+                extended = buildExtended(om, nwsDaily.length);
+            } catch (err) {
+                console.warn('Open-Meteo fetch failed; using placeholder for extended days.', err);
+            }
+
+            const daily = nwsDaily.slice();
+            for (let i = nwsDaily.length; i < 11; i++) {
+                const ext = extended[i - nwsDaily.length];
+                daily.push(ext || PLACEHOLDER[i % PLACEHOLDER.length]);
+            }
+            renderForecast(daily.slice(0, 11));
         }
 
         loadAndRender();
@@ -461,3 +556,4 @@ RUNTIME ARCHITECTURE & ENGINE FLAGS:
 
 </body>
 </html>
+
