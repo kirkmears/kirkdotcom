@@ -79,9 +79,9 @@
 	<p style="text-align: center;"><img src="https://cdn.tegna-media.com/wfaa/weather/7day.jpg" alt="" width="511" height="287" align="middle">&nbsp;</p>
 	<p style="text-align: center;">&nbsp;</p>
 
-	<p style="text-align: center;">
-  <a href="https://kirkdotcom.azurewebsites.net/weather.html" target="_blank">
-    <iframe src="https://kirkdotcom.azurewebsites.net/weather.html" alt="" width="66%" height="550" style="border:none" align="middle;"></iframe>
+	<p style="text-align: center;">		
+	<iframe src="https://kirkdotcom.azurewebsites.net/weather.html?embed=1" ...>
+		
   </a>
 
 	
