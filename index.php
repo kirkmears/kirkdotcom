@@ -88,7 +88,7 @@
 
     <!-- Weather page: FIXED iframe (was unclosed + had no dimensions) -->
     <p style="text-align: center;">
-        <iframe src="https://kirkdotcom.azurewebsites.net/weather.html?embed=1" width="1200" height="400" style="border: none;"></iframe>
+        <iframe src="https://kirkdotcom.azurewebsites.net/weather.html?embed=1" width="1000" height="450" style="border: none;"></iframe>
     </p>
     <p style="text-align: center;">
         <a href="https://kirkdotcom.azurewebsites.net/weather.html" target="_blank">Dallas Weather</a>
