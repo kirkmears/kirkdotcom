@@ -80,9 +80,10 @@
 	<p style="text-align: center;">&nbsp;</p>
 
 	<p style="text-align: center;">		
+<a href="https://kirkdotcom.azurewebsites.net/weather.html" target="_blank">
 	<iframe src="https://kirkdotcom.azurewebsites.net/weather.html?embed=1" ...>
 		
-  </a>
+</a>
 
 	
 
