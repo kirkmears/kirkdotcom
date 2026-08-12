@@ -81,7 +81,7 @@
 
 	<p style="text-align: center;">
   <a href="https://kirkdotcom.azurewebsites.net/weather.html" target="_blank">
-    <img src="https://kirkdotcom.azurewebsites.net/weather.html" alt="" width="1200" height="500" align="middle">
+    <iframe src="https://kirkdotcom.azurewebsites.net/weather.html" alt="" width="66%" height="66%" style="border:none" align="middle;"></iframe>
   </a>
 
 	
