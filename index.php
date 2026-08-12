@@ -74,10 +74,15 @@
 
 </table>
 
-<p style="text-align: center;">&nbsp;</p>
-<p style="text-align: center;"><img src="https://cdn.tegna-media.com/wfaa/weather/7day.jpg" alt="" width="511" height="287" align="middle">&nbsp;</p>
-<p style="text-align: center;">&nbsp;</p>
 
+	<p style="text-align: center;">&nbsp;</p>
+	<p style="text-align: center;"><img src="https://cdn.tegna-media.com/wfaa/weather/7day.jpg" alt="" width="511" height="287" align="middle">&nbsp;</p>
+	<p style="text-align: center;">&nbsp;</p>
+
+	<p style="text-align: center;">
+  <a href="https://kirkdotcom.azurewebsites.net/weather.html" target="_blank">
+    <img src="https://kirkdotcom.azurewebsites.net/weather.html" alt="" width="1200" height="500" align="middle">
+  </a>
 
 	
 
