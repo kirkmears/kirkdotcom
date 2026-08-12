@@ -548,11 +548,11 @@ RUNTIME ARCHITECTURE & ENGINE FLAGS:
             }
 
             const daily = nwsDaily.slice();
-            for (let i = nwsDaily.length; i < 12; i++) {
+            for (let i = nwsDaily.length; i < 11; i++) {
                 const ext = extended[i - nwsDaily.length];
                 daily.push(ext || PLACEHOLDER[i % PLACEHOLDER.length]);
             }
-            renderForecast(daily.slice(0, 12));
+            renderForecast(daily.slice(0, 11));
         }
 
         loadAndRender();
